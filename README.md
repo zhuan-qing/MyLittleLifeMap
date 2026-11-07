@@ -6,6 +6,8 @@ Spring Boot 微服务后端，四个业务服务 + 中间件全部跑单机 Dock
 当前进度：**P0 基础设施已完成**（中间件可连通、三库就绪、Flyway 基线可执行）。
 业务代码从 P1 place-service 开始。
 
+产品定位是**本机自用、桌面浏览器访问**：全部端口只绑 `127.0.0.1`，不做手机端适配、不做 HTTPS、不上公网（dev_doc v2.0）。
+
 ---
 
 ## 1. 环境决策：Docker Desktop，不开虚拟机
@@ -17,13 +19,13 @@ Spring Boot 微服务后端，四个业务服务 + 中间件全部跑单机 Dock
 | 内存 | 共用 WSL2 一个轻量 VM，可精确限到 6GB | 宿主 8GB 起，同时跑 IDE 必炸 |
 | 与宿主联通 | 容器端口直接映射到 `127.0.0.1`，IDEA 里的服务连 `localhost:5432` 就行 | NAT/桥接，容器 IP 每次重启漂移 |
 | 文件挂载 | WSL2 本地 ext4，构建快 | 共享目录走 9p/vboxsf，Maven 构建慢 5–10 倍 |
-| 与生产一致性 | P7 同一份 compose 搬到服务器 | 多一层虚拟化差异，出问题难定位 |
+| 与生产一致性 | 本地就是最终形态，不需要再迁 | 多一层虚拟化差异，出问题难定位 |
 
 只有当公司安全策略禁止 Hyper-V/WSL2，或需要验证 systemd、iptables、真实多机网络时，才值得上虚拟机。
 
 ### 给 WSL2 限内存（必做）
 
-九个容器常驻约 3.6GB（dev_doc §8.1）。在 `C:\Users\<你的用户名>\.wslconfig` 写入：
+中间件四容器 + 四个业务服务 JVM + Vite 常驻约 3.8GB（dev_doc §8.1）。在 `C:\Users\<你的用户名>\.wslconfig` 写入：
 
 ```ini
 [wsl2]
@@ -63,9 +65,11 @@ docker compose down -v        # 连数据卷一起删 —— 会丢全部数据
 | MinIO 控制台 | 9001 | 同上 | http://127.0.0.1:9001 |
 | Nacos | 8848 / 9848 | 开发环境关鉴权 | http://127.0.0.1:8848/nacos |
 
-四个业务服务（宿主直跑时）：gateway 8080、place 8081、media 8082、stats 8083。
+四个业务服务（宿主直跑时）：gateway 8080、place 8081、media 8082、stats 8083；前端 Vite 5173，`/api` 代理到 8080。
 
-> `.env` 已进 `.gitignore`。dev_doc §8.2 要求生产配置走 Nacos，密码不进代码库——本地这套默认密码只用于开发机。
+所有端口都绑在 `127.0.0.1`（含 compose 里的中间件），同一个 Wi-Fi 下的其他设备访问不到。
+
+> `.env` 已进 `.gitignore`。dev_doc §8.2 要求按环境变化的配置走 Nacos、密码不进代码库。
 
 ## 4. 结构
 
@@ -76,7 +80,7 @@ lifemap-gateway/            8080 路由与鉴权，反应式栈
 lifemap-place-service/      8081 地点与地理编码，独占 place_db
 lifemap-media-service/      8082 图片管线，独占 media_db + MinIO
 lifemap-stats-service/      8083 省市点亮聚合，无库，结果进 Redis
-docker-compose.yml          P0 中间件编排（业务容器在 P7 的生产编排里）
+docker-compose.yml          P0 中间件编排（业务服务跑宿主机 JVM，不打镜像）
 deploy/postgres/init/       首次启动建三库，幂等
 deploy/nacos/<GROUP>/       Nacos 配置源文件，改完重跑 nacos-init.sh
 scripts/nacos-init.sh       namespace + 四组配置，幂等
@@ -92,7 +96,7 @@ scripts/smoke-test.sh       P0 验收
 
 ### Nacos 命名
 
-- namespace 按环境：`lifemap-dev`（生产另建 `lifemap-prod`）
+- namespace：本地只有一个环境，统一用 `lifemap-dev`，不要多建（多建只会在控制台里点错）
 - group 按服务：`GATEWAY` / `PLACE` / `MEDIA` / `STATS`
 - dataId：`gateway.yaml`、`place-service.yaml`、`media-service.yaml`、`stats-service.yaml`
 

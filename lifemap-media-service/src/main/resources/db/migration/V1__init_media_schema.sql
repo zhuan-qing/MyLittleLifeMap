@@ -3,7 +3,7 @@
 -- 口径来源：dev_doc.md §5.1 photo 表 + §7 规约③ 图片管线
 --
 -- 相对文档的一处补充：文档只列了 object_key（原图）与 thumb_key（缩略图），
--- 但规约③要求同时产出 1600px WebP（详情页），因此增加 webp_key。
+-- 但规约③要求同时产出 2048px WebP（桌面详情大图），因此增加 webp_key。
 -- 三个对象同桶不同前缀：originals/ webp/ thumbs/，均按 年/月/uuid 分片。
 -- 原图永不修改、永不裁剪。
 -- =====================================================================
@@ -31,8 +31,8 @@ CREATE TABLE photo
 COMMENT ON TABLE photo IS '照片元数据，物理文件在 MinIO';
 COMMENT ON COLUMN photo.place_id IS '所属地点 ID，跨库引用，不建外键（数据归属原则）';
 COMMENT ON COLUMN photo.object_key IS 'MinIO 原图 key，例：originals/2026/11/uuid.jpg';
-COMMENT ON COLUMN photo.webp_key IS 'MinIO 1600px WebP key，详情页使用';
-COMMENT ON COLUMN photo.thumb_key IS 'MinIO 400px 缩略图 key，列表使用';
+COMMENT ON COLUMN photo.webp_key IS 'MinIO 2048px WebP key，桌面详情大图使用';
+COMMENT ON COLUMN photo.thumb_key IS 'MinIO 480px 缩略图 key，时间轴与点亮网格使用';
 COMMENT ON COLUMN photo.deleted_at IS '软删时间，NULL 表示有效';
 
 -- 按地点取照片（详情页）与按地点批量对账都要它

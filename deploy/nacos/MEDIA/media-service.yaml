@@ -8,14 +8,15 @@ lifemap:
     minio:
       bucket: lifemap
   image:
-    # 详情页展示图长边 1600px，WebP，质量 82
+    # 详情大图长边 2048px，WebP，质量 0.82
+    # 桌面右栏详情区约 780×560 逻辑像素，2 倍屏要 1560px，2048 留余量给全屏看图
     webp:
-      max-edge: 1600
+      max-edge: 2048
       quality: 0.82
-    # 列表缩略图长边 400px，WebP，质量 75
+    # 时间轴缩略图 72×72、点亮网格 240px 宽，2 倍屏取 480
     thumb:
-      max-edge: 400
-      quality: 0.75
+      max-edge: 480
+      quality: 0.78
     # 单张原图上限 20MB，与 spring.servlet.multipart 保持一致
     max-bytes: 20971520
 

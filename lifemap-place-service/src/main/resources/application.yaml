@@ -1,4 +1,5 @@
 server:
+  address: 127.0.0.1
   port: ${PLACE_PORT:8081}
   shutdown: graceful
 

@@ -1,4 +1,6 @@
 server:
+  # 本机自用，只绑回环，不对局域网暴露
+  address: 127.0.0.1
   port: ${GATEWAY_PORT:8080}
 
 spring:

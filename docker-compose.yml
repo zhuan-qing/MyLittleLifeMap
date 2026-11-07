@@ -1,7 +1,7 @@
 # P0 中间件编排：PostgreSQL / Redis / MinIO / Nacos
 #
-# 只负责"依赖"，不包含四个业务服务容器——业务容器在 P7 用 deploy/ 下的生产编排收口。
-# 这样开发期可以在宿主机用 IDEA 直接起服务，改代码热重启，不必每次打镜像。
+# 只负责"稳定依赖"，四个业务服务在宿主机用 JVM 跑（改代码热重启，不必反复打镜像）。
+# 全部端口只绑 127.0.0.1，本机自用，不对局域网暴露。
 #
 # 启动：docker compose --env-file .env up -d
 # 状态：docker compose ps
@@ -30,7 +30,8 @@ services:
       TZ: Asia/Shanghai
       PGTZ: Asia/Shanghai
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      # 只绑回环：同一个 Wi-Fi 下的其他设备摸不到数据库
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       # 挂父目录而不是 .../data：PG 18 起官方镜像把 PGDATA 移到了 /var/lib/postgresql/18/docker，
       # 挂父目录对 17/18 都成立，不会出现"升级镜像后数据丢失"
@@ -77,7 +78,7 @@ services:
       - --maxmemory-policy
       - allkeys-lru
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -100,8 +101,8 @@ services:
       TZ: Asia/Shanghai
     command: ["server", "/data", "--console-address", ":9001"]
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - miniodata:/data
     healthcheck:
@@ -155,8 +156,8 @@ services:
       NACOS_SERVER_PORT: 8848
       TZ: Asia/Shanghai
     ports:
-      - "${NACOS_PORT:-8848}:8848"       # HTTP 控制台与 OpenAPI
-      - "${NACOS_GRPC_PORT:-9848}:9848"  # 客户端 gRPC（2.x 必需，端口 = 8848 + 1000）
+      - "127.0.0.1:${NACOS_PORT:-8848}:8848"       # HTTP 控制台与 OpenAPI
+      - "127.0.0.1:${NACOS_GRPC_PORT:-9848}:9848"  # 客户端 gRPC（2.x 必需，端口 = 8848 + 1000）
     volumes:
       - nacosdata:/home/nacos/data
       - nacoslogs:/home/nacos/logs
