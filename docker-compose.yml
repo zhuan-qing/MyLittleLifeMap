@@ -19,7 +19,8 @@ x-logging: &default-logging
 services:
 
   postgres:
-    image: postgres:${POSTGRES_IMAGE_TAG:-18.6}
+    # 镜像地址走 .env，国内直连 Docker Hub 常被拦，换源只改 .env 一行
+    image: ${POSTGRES_IMAGE:-postgres:18.6}
     container_name: lifemap-postgres
     restart: unless-stopped
     environment:
@@ -58,7 +59,7 @@ services:
     networks: [lifemap-net]
 
   redis:
-    image: redis:${REDIS_IMAGE_TAG:-7.4-alpine}
+    image: ${REDIS_IMAGE:-redis:7.4-alpine}
     container_name: lifemap-redis
     restart: unless-stopped
     environment:
@@ -92,7 +93,7 @@ services:
     networks: [lifemap-net]
 
   minio:
-    image: minio/minio:${MINIO_IMAGE_TAG:-latest}
+    image: ${MINIO_IMAGE:-minio/minio:latest}
     container_name: lifemap-minio
     restart: unless-stopped
     environment:
@@ -118,7 +119,7 @@ services:
 
   # 一次性任务：建桶 + 关掉匿名访问。跑完即退出，不占常驻资源
   minio-init:
-    image: minio/mc:${MC_IMAGE_TAG:-latest}
+    image: ${MC_IMAGE:-minio/mc:latest}
     container_name: lifemap-minio-init
     depends_on:
       minio:
@@ -142,7 +143,7 @@ services:
     networks: [lifemap-net]
 
   nacos:
-    image: nacos/nacos-server:${NACOS_IMAGE_TAG:-v2.3.2}
+    image: ${NACOS_IMAGE:-nacos/nacos-server:v2.3.2}
     container_name: lifemap-nacos
     restart: unless-stopped
     environment:
@@ -162,12 +163,9 @@ services:
       - nacosdata:/home/nacos/data
       - nacoslogs:/home/nacos/logs
     healthcheck:
-      # curl / wget 都试一遍：不同 nacos 镜像变体的基础镜像不一样，避免因缺工具误判不健康
-      test:
-        - CMD-SHELL
-        - >-
-          curl -fsS http://127.0.0.1:8848/nacos/v1/console/health/readiness 2>/dev/null | grep -q UP
-          || wget -qO- http://127.0.0.1:8848/nacos/v1/console/health/readiness 2>/dev/null | grep -q UP
+      # 判 HTTP 状态码而不是响应体：Nacos 2.3 的 readiness 返回正文是 "OK"，
+      # 不是 "UP"（actuator 那套才是 UP），按 body 匹配会一直误判 unhealthy
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:8848/nacos/v1/console/health/readiness"]
       interval: 10s
       timeout: 5s
       retries: 20

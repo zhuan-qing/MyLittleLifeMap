@@ -100,8 +100,9 @@ fi
 # ---------------------------------------------------------------- Nacos
 section "5. Nacos（namespace + 四个 group）"
 NACOS_BASE="http://127.0.0.1:${NACOS_PORT}/nacos"
-if curl -fsS "${NACOS_BASE}/v1/console/health/readiness" 2>/dev/null | grep -q UP; then
-  ok "readiness → UP（控制台 http://127.0.0.1:${NACOS_PORT}/nacos）"
+# readiness 返回正文是 "OK"（不是 actuator 的 "UP"），只判 HTTP 状态码
+if curl -fsS -o /dev/null "${NACOS_BASE}/v1/console/health/readiness" 2>/dev/null; then
+  ok "readiness → 200（控制台 http://127.0.0.1:${NACOS_PORT}/nacos）"
 else
   bad "Nacos 未就绪"
 fi

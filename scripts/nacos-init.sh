@@ -84,12 +84,14 @@ for file in "${files[@]}"; do
   group="$(basename "$(dirname "${file}")")"
   data_id="$(basename "${file}")"
 
+  # 配置内容从 stdin 读：Git Bash 下 curl.exe 不认 /e/... 这种 MSYS 路径，
+  # 用 content@- 配合重定向，Windows 与 Linux 都能跑
   resp="$(curl -sS -X POST "$(with_token "${BASE}/v1/cs/configs")" \
     --data-urlencode "dataId=${data_id}" \
     --data-urlencode "group=${group}" \
     --data-urlencode "tenant=${NACOS_NAMESPACE}" \
     --data-urlencode "type=yaml" \
-    --data-urlencode "content@${file}")"
+    --data-urlencode "content@-" < "${file}")"
   [[ "${resp}" == "true" ]] || die "发布 ${group}/${data_id} 失败：${resp}"
   log "已发布 ${group}/${data_id}"
 done

@@ -123,7 +123,7 @@ scripts/smoke-test.sh       P0 验收
 
 **Nacos 连不上**：除了 8848，2.x 还要 9848（gRPC，端口号 = 8848 + 1000）。宿主防火墙放开这两个，否则服务注册一直转圈。
 
-**镜像标签拉不到**：`postgres:18.6`、`nacos/nacos-server:v2.3.2` 是钉死的版本，拉不到就在 `.env` 里改 `POSTGRES_IMAGE_TAG` / `NACOS_IMAGE_TAG`。
+**镜像拉不下来**：国内直连 Docker Hub 基本不通，实测 `docker.xuanyuan.me` / `docker.1ms.run` 对 `minio/*` 直接返回 403。所以镜像地址全放在 `.env` 的 `*_IMAGE` 变量里，当前用的是轩辕与 1Panel 两个镜像站（轩辕需要登录：`docker login docker.xuanyuan.run`）。哪天某个源挂了，只改 `.env` 里对应一行，compose 文件不用动。
 
 **端口被占**：`.env` 里改 `POSTGRES_PORT` / `REDIS_PORT` / `NACOS_PORT` 等，服务端配置读的是同一批环境变量。
 
