@@ -1,0 +1,71 @@
+server:
+  port: ${MEDIA_PORT:8082}
+  shutdown: graceful
+
+spring:
+  application:
+    name: media-service
+  config:
+    import:
+      - optional:nacos:media-service.yaml?group=MEDIA&refreshEnabled=true
+  cloud:
+    nacos:
+      server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+      discovery:
+        namespace: ${NACOS_NAMESPACE:lifemap-dev}
+        group: MEDIA
+        metadata:
+          version: 1.0.0
+      config:
+        namespace: ${NACOS_NAMESPACE:lifemap-dev}
+        group: MEDIA
+        file-extension: yaml
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:127.0.0.1}:${POSTGRES_PORT:5432}/media_db
+    username: ${POSTGRES_USER:lifemap}
+    password: ${POSTGRES_PASSWORD:lifemap_dev_2026}
+    hikari:
+      pool-name: media-hikari
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 3000
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 0
+    table: flyway_schema_history
+  servlet:
+    multipart:
+      # 单张照片上限 20MB，单次请求 5 张；与 P2 上传接口口径一致
+      max-file-size: 20MB
+      max-request-size: 100MB
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+
+lifemap:
+  storage:
+    minio:
+      endpoint: http://${MINIO_HOST:127.0.0.1}:${MINIO_API_PORT:9000}
+      access-key: ${MINIO_ROOT_USER:minioadmin}
+      secret-key: ${MINIO_ROOT_PASSWORD:minioadmin123}
+      bucket: ${MINIO_BUCKET:lifemap}
+      # 原图与缩略图同桶不同前缀，按 年/月/uuid 分片，避免单目录膨胀
+      origin-prefix: originals
+      webp-prefix: webp
+      thumb-prefix: thumbs
+
+logging:
+  pattern:
+    level: "%5p [traceId=%X{traceId:-}]"
+  level:
+    com.alibaba.nacos: warn

@@ -1,0 +1,18 @@
+# stats-service 的环境级配置（Nacos dataId=stats-service.yaml, group=STATS）
+#
+# 点亮缓存 TTL 与聚合口径开关放这里：改判定口径只改一处，不重新发版。
+
+lifemap:
+  env: dev
+  stats:
+    cache:
+      lightup-ttl: 5m
+      key-prefix: "lifemap:stats:lightup"
+    # 省份 = left(adcode,2) || '0000'，城市 = left(adcode,4) || '00'
+    adcode:
+      province-length: 2
+      city-length: 4
+
+logging:
+  level:
+    com.hc.lifemap: INFO

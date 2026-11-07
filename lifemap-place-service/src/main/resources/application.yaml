@@ -1,0 +1,61 @@
+server:
+  port: ${PLACE_PORT:8081}
+  shutdown: graceful
+
+spring:
+  application:
+    name: place-service
+  config:
+    import:
+      - optional:nacos:place-service.yaml?group=PLACE&refreshEnabled=true
+  cloud:
+    nacos:
+      server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+      discovery:
+        namespace: ${NACOS_NAMESPACE:lifemap-dev}
+        group: PLACE
+        metadata:
+          version: 1.0.0
+      config:
+        namespace: ${NACOS_NAMESPACE:lifemap-dev}
+        group: PLACE
+        file-extension: yaml
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:127.0.0.1}:${POSTGRES_PORT:5432}/place_db
+    username: ${POSTGRES_USER:lifemap}
+    password: ${POSTGRES_PASSWORD:lifemap_dev_2026}
+    hikari:
+      pool-name: place-hikari
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 3000
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 0
+    table: flyway_schema_history
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+
+# 高德 Web 服务 Key 从 Nacos 或环境变量注入，禁止写进代码库
+lifemap:
+  geo:
+    amap:
+      key: ${AMAP_WEB_KEY:}
+      base-url: https://restapi.amap.com
+
+logging:
+  pattern:
+    level: "%5p [traceId=%X{traceId:-}]"
+  level:
+    com.alibaba.nacos: warn

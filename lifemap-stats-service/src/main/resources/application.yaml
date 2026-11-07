@@ -1,0 +1,58 @@
+server:
+  port: ${STATS_PORT:8083}
+  shutdown: graceful
+
+spring:
+  application:
+    name: stats-service
+  config:
+    import:
+      - optional:nacos:stats-service.yaml?group=STATS&refreshEnabled=true
+  cloud:
+    nacos:
+      server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+      discovery:
+        namespace: ${NACOS_NAMESPACE:lifemap-dev}
+        group: STATS
+        metadata:
+          version: 1.0.0
+      config:
+        namespace: ${NACOS_NAMESPACE:lifemap-dev}
+        group: STATS
+        file-extension: yaml
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:lifemap_dev_2026}
+      database: 1
+      timeout: 2s
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 1
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+
+lifemap:
+  stats:
+    cache:
+      # 点亮结果缓存 5 分钟，允许分钟级不一致
+      lightup-ttl: 5m
+      key-prefix: "lifemap:stats:lightup"
+
+logging:
+  pattern:
+    level: "%5p [traceId=%X{traceId:-}]"
+  level:
+    com.alibaba.nacos: warn

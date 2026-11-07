@@ -1,0 +1,52 @@
+server:
+  port: ${GATEWAY_PORT:8080}
+
+spring:
+  application:
+    name: gateway
+  main:
+    web-application-type: reactive
+  config:
+    # 配置中心优先级：本地 application.yaml 是兜底默认值，Nacos 上的同名配置作为环境覆盖
+    import:
+      - optional:nacos:gateway.yaml?group=GATEWAY&refreshEnabled=true
+  cloud:
+    nacos:
+      server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+      discovery:
+        namespace: ${NACOS_NAMESPACE:lifemap-dev}
+        group: GATEWAY
+        metadata:
+          version: 1.0.0
+      config:
+        namespace: ${NACOS_NAMESPACE:lifemap-dev}
+        group: GATEWAY
+        file-extension: yaml
+    gateway:
+      discovery:
+        locator:
+          # 关闭按服务名自动路由，路由表显式声明，避免内网接口被意外暴露
+          enabled: false
+          lower-case-service-id: true
+      httpclient:
+        connect-timeout: 3000
+        response-timeout: 10s
+      # 路由规则在 P3 落地，此处保持空表以便 P0 单独启动
+      routes: []
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+
+logging:
+  pattern:
+    level: "%5p [traceId=%X{traceId:-}]"
+  level:
+    com.alibaba.nacos: warn

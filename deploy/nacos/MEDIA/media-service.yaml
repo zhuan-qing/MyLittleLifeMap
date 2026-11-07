@@ -1,0 +1,24 @@
+# media-service 的环境级配置（Nacos dataId=media-service.yaml, group=MEDIA）
+#
+# 三个尺寸口径写死在这里而不是代码里：改规格不动代码，改完热生效。
+
+lifemap:
+  env: dev
+  storage:
+    minio:
+      bucket: lifemap
+  image:
+    # 详情页展示图长边 1600px，WebP，质量 82
+    webp:
+      max-edge: 1600
+      quality: 0.82
+    # 列表缩略图长边 400px，WebP，质量 75
+    thumb:
+      max-edge: 400
+      quality: 0.75
+    # 单张原图上限 20MB，与 spring.servlet.multipart 保持一致
+    max-bytes: 20971520
+
+logging:
+  level:
+    com.hc.lifemap: INFO

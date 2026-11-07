@@ -1,0 +1,13 @@
+# gateway 的环境级配置（Nacos dataId=gateway.yaml, group=GATEWAY）
+#
+# 优先级：Nacos 配置 > 本地 application.yaml。本地文件只放"启动必需、与环境无关"的默认值，
+# 凡是按环境变化的（路由目标、JWT 密钥、限流阈值）都放这里，改完不用重新打包。
+#
+# P3 会在此处补：lifemap.jwt.secret / lifemap.jwt.ttl、限流规则、路由表。
+
+lifemap:
+  env: dev
+
+logging:
+  level:
+    com.hc.lifemap: INFO

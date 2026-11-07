@@ -1,0 +1,18 @@
+# place-service 的环境级配置（Nacos dataId=place-service.yaml, group=PLACE）
+#
+# 数据源密码等敏感项在 .env / 系统环境变量里，不放这里；
+# 这里只放业务开关与环境差异项，配合 @RefreshScope 可热更新。
+
+lifemap:
+  env: dev
+  geo:
+    amap:
+      # 本地开发从环境变量 AMAP_WEB_KEY 注入；生产在此处填 Nacos 加密后的值
+      key: ${AMAP_WEB_KEY:}
+      base-url: https://restapi.amap.com
+      # 高德 QPS 有限，单机串行调用即可，超时给到 3s
+      timeout: 3s
+
+logging:
+  level:
+    com.hc.lifemap: INFO
