@@ -37,6 +37,16 @@ spring:
     baseline-version: 0
     table: flyway_schema_history
 
+# MyBatis-Plus：下划线转驼峰、打印真实 SQL（仅开发期，P7 关掉）、主键自增
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    banner: false
+    db-config:
+      id-type: auto
+
 management:
   endpoints:
     web:
