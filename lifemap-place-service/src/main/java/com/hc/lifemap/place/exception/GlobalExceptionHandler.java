@@ -1,9 +1,11 @@
 package com.hc.lifemap.place.exception;
 
+import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import com.hc.lifemap.common.api.ApiResponse;
 import com.hc.lifemap.common.api.ErrorCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -13,7 +15,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import java.util.stream.Collectors;
 
 /**
- * 全局异常翻译：三类异常 → 统一响应体，HTTP 状态码一律 200。
+ * 全局异常翻译：可预期的失败 → 统一响应体，HTTP 状态码一律 200。
  *
  * <p>口径见 dev_doc §6.2：前端只判 {@code code}，不必同时处理两套语义；
  * 只有框架级未捕获异常才落到 50000。</p>
@@ -55,6 +57,35 @@ public class GlobalExceptionHandler {
                 ? "参数 " + mismatch.getName() + " 类型不合法"
                 : "缺少必填参数 " + ((MissingServletRequestParameterException) ex).getParameterName();
         log.warn("参数不合法: {}", message);
+        return ApiResponse.fail(ErrorCode.BAD_REQUEST, message);
+    }
+
+    /**
+     * 请求体能读成 JSON、但某个字段的值转不过去（{@code "visitedOn":"2026/10/01"}、数字写成字符串）。
+     *
+     * <p>这一类同样属于调用方错误，但它在 {@code @Valid} 之前就失败了——Jackson 反序列化阶段抛
+     * {@link HttpMessageNotReadableException}，method 参数校验压根没机会执行。不单独接住就会落到
+     * 最后的 {@code Exception} 兜底变成 50000，把"日期格式写错"报成"服务故障"。</p>
+     *
+     * <p>沿着 cause 链找 {@link InvalidFormatException} 而不是直接取 {@code getMostSpecificCause()}：
+     * 后者会一路挖到根因，日期解析失败时最底层是 {@code DateTimeParseException}，它不带字段路径，
+     * 结果就是"字段名丢了"——而这正是这条提示唯一有用的信息。</p>
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ApiResponse<Void> handleUnreadableBody(HttpMessageNotReadableException ex) {
+        InvalidFormatException invalid = null;
+        for (Throwable cursor = ex; cursor != null && invalid == null; cursor = cursor.getCause()) {
+            if (cursor instanceof InvalidFormatException candidate) {
+                invalid = candidate;
+            }
+        }
+
+        String message = (invalid != null && !invalid.getPath().isEmpty())
+                ? invalid.getPath().stream()
+                        .map(ref -> ref.getFieldName() != null ? ref.getFieldName() : "[" + ref.getIndex() + "]")
+                        .collect(Collectors.joining(".")) + " 格式不合法"
+                : "请求体格式不合法";
+        log.warn("请求体解析失败: {}", message);
         return ApiResponse.fail(ErrorCode.BAD_REQUEST, message);
     }
 
