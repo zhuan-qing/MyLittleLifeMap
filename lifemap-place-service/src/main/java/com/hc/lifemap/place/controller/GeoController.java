@@ -1,6 +1,7 @@
 package com.hc.lifemap.place.controller;
 
 import com.hc.lifemap.common.api.ApiResponse;
+import com.hc.lifemap.place.client.AmapClient.Regeo;
 import com.hc.lifemap.place.client.AmapPoi;
 import com.hc.lifemap.place.service.GeoService;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -8,6 +9,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -38,5 +40,19 @@ public class GeoController {
                                              @RequestParam(required = false) String city,
                                              @RequestParam(defaultValue = "1") Integer page) {
         return ApiResponse.ok(geoService.search(keywords, city, page));
+    }
+
+    /**
+     * 坐标反查行政区：地图上点一个点，自动填出省市区和 adcode。
+     *
+     * <p>境外坐标返回 code=0 但四个字段为 null——"那里没有国内行政区"是正常结果，
+     * 前端据此不填行政区即可，不该当成错误弹提示。</p>
+     *
+     * @param lng 经度，−180–180，越界 10400
+     * @param lat 纬度，−90–90，越界 10400
+     */
+    @GetMapping("/regeo")
+    public ApiResponse<Regeo> regeo(@RequestParam BigDecimal lng, @RequestParam BigDecimal lat) {
+        return ApiResponse.ok(geoService.regeo(lng, lat));
     }
 }

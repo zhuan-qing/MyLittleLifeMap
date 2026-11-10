@@ -4,12 +4,14 @@ import com.hc.lifemap.common.api.ErrorCode;
 import com.hc.lifemap.place.client.AmapClient;
 import com.hc.lifemap.place.client.AmapPoi;
 import com.hc.lifemap.place.exception.BizException;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -57,5 +59,32 @@ class GeoServiceTest {
         // 城市传空串时不该把 "  " 原样发给高德：那会变成一次"城市不存在"的空结果
         assertEquals(expected, geoService.search("  西湖  ", "  ", null));
         verify(amapClient).searchPoi("西湖", null, 1);
+    }
+
+    @Test
+    @DisplayName("越界坐标在发请求前就被拦掉")
+    void regeoRejectsOutOfRangeCoordinates() {
+        assertBadRequest("200", "30");
+        assertBadRequest("-181", "30");
+        assertBadRequest("120", "91");
+        assertBadRequest("120", null);
+
+        verify(amapClient, never()).regeo(any(), any());
+    }
+
+    @Test
+    void regeoDelegatesValidCoordinates() {
+        AmapClient.Regeo expected = new AmapClient.Regeo("浙江省", "杭州市", "330106", "西湖区北山街道");
+        when(amapClient.regeo(new BigDecimal("120.148871"), new BigDecimal("30.247482"))).thenReturn(expected);
+
+        assertEquals(expected, geoService.regeo(new BigDecimal("120.148871"), new BigDecimal("30.247482")));
+    }
+
+    private void assertBadRequest(String lng, String lat) {
+        BigDecimal lngValue = lng == null ? null : new BigDecimal(lng);
+        BigDecimal latValue = lat == null ? null : new BigDecimal(lat);
+
+        BizException ex = assertThrows(BizException.class, () -> geoService.regeo(lngValue, latValue));
+        assertEquals(ErrorCode.BAD_REQUEST, ex.errorCode());
     }
 }

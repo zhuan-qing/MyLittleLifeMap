@@ -146,4 +146,61 @@ class AmapClientTest {
         assertEquals(ErrorCode.GEO_PROVIDER_ERROR, ex.errorCode());
         return ex.getMessage();
     }
+
+    @Test
+    @DisplayName("逆地理解析出省市区 adcode 与格式化地址")
+    void parsesRegeo() throws Exception {
+        JsonNode body = json("""
+                {"status":"1","regeocode":{"formatted_address":"浙江省杭州市西湖区北山街道",
+                 "addressComponent":{"province":"浙江省","city":"杭州市","citycode":"0571","adcode":"330106"}}}
+                """);
+
+        AmapClient.Regeo regeo = AmapClient.parseRegeo(body);
+
+        assertEquals("浙江省", regeo.province());
+        assertEquals("杭州市", regeo.city());
+        assertEquals("330106", regeo.adcode());
+        assertEquals("浙江省杭州市西湖区北山街道", regeo.address());
+    }
+
+    @Test
+    @DisplayName("直辖市的 city 是空数组时回落成省名，不能是 null")
+    void regeoFallsBackToProvinceForMunicipality() throws Exception {
+        // 北京市区：city 返回 []，不回落的话前端城市列是空的
+        JsonNode body = json("""
+                {"status":"1","regeocode":{"formatted_address":"北京市东城区东华门街道",
+                 "addressComponent":{"province":"北京市","city":[],"adcode":"110101"}}}
+                """);
+
+        AmapClient.Regeo regeo = AmapClient.parseRegeo(body);
+
+        assertEquals("北京市", regeo.city(), "直辖市 city 必须回落成省名");
+        assertEquals("110101", regeo.adcode());
+    }
+
+    @Test
+    @DisplayName("境外坐标（addressComponent 为空）不报错，四个字段为 null")
+    void regeoOfOverseasCoordinateReturnsNulls() throws Exception {
+        JsonNode body = json("{\"status\":\"1\",\"regeocode\":{\"addressComponent\":{}}}");
+
+        AmapClient.Regeo regeo = AmapClient.parseRegeo(body);
+
+        assertNull(regeo.province());
+        assertNull(regeo.city());
+        assertNull(regeo.adcode());
+        assertNull(regeo.address());
+    }
+
+    @Test
+    @DisplayName("逆地理请求里 location 是 lng,lat 而不是 lat,lng")
+    void regeoUriKeepsLngLatOrder() {
+        AmapClient client = new AmapClient(new AmapProperties("k123", null, null), RestClient.builder());
+
+        URI uri = client.regeoUri(new BigDecimal("120.148871"), new BigDecimal("30.247482"));
+
+        assertEquals("/v3/geocode/regeo", uri.getPath());
+        // 逗号在 query 里是合法字符，不会被编码；顺序写反（lat,lng）会落到地球另一端
+        assertTrue(uri.getQuery().contains("location=120.148871,30.247482"),
+                "location 必须是 lng,lat：" + uri);
+    }
 }

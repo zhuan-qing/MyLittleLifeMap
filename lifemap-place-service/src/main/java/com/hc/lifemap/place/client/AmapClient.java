@@ -1,6 +1,7 @@
 package com.hc.lifemap.place.client;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.MissingNode;
 import com.hc.lifemap.common.api.ErrorCode;
 import com.hc.lifemap.place.config.AmapProperties;
 import com.hc.lifemap.place.exception.BizException;
@@ -14,12 +15,13 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import java.math.BigDecimal;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 高德 Web 服务代理（POI 搜索；逆地理由 P1-T11 加）。
+ * 高德 Web 服务代理：POI 搜索与逆地理。
  *
  * <p>只做三件事：拼请求、判 {@code status}、把报文映射成本项目结构。所有失败都翻译成 20500
  * 加一句人话，既不把高德原始报文丢给前端，也不让 Key 出现在日志里——高德异常自带的 message
@@ -31,6 +33,7 @@ public class AmapClient {
     private static final Logger log = LoggerFactory.getLogger(AmapClient.class);
 
     private static final String PLACE_TEXT_PATH = "/v3/place/text";
+    private static final String REGEO_PATH = "/v3/geocode/regeo";
 
     /** 单页固定 20 条：前端下拉列表一屏就够，多取只会让响应变慢。 */
     private static final int PAGE_SIZE = 20;
@@ -56,27 +59,54 @@ public class AmapClient {
      * @param page     从 1 开始
      */
     public List<AmapPoi> searchPoi(String keywords, String city, int page) {
+        requireKey();
+        JsonNode body = fetch(placeTextUri(keywords, city, page), "POI 搜索 keywords=" + keywords);
+        requireSuccess(body);
+        return parsePois(body);
+    }
+
+    /**
+     * 坐标反查行政区，给"地图上随手点一个点"用。
+     *
+     * <p>境外坐标高德多半仍返回 {@code status=1}，只是 {@code addressComponent} 是空的，
+     * 所以这里不报错、返回四个 null 字段——"没有国内行政区"是正常结果，不是故障。</p>
+     *
+     * @param lng 经度；{@code location} 的顺序是 {@code lng,lat}，写反会落到地球另一端
+     */
+    public Regeo regeo(BigDecimal lng, BigDecimal lat) {
+        requireKey();
+        JsonNode body = fetch(regeoUri(lng, lat), "逆地理");
+        requireSuccess(body);
+        return parseRegeo(body);
+    }
+
+    /** 逆地理结果：行政区四件套，前端拿来直接填表。 */
+    public record Regeo(String province, String city, String adcode, String address) {
+    }
+
+    private void requireKey() {
         if (!StringUtils.hasText(properties.key())) {
             throw new BizException(ErrorCode.GEO_PROVIDER_ERROR, "未配置高德 Web 服务 Key");
         }
+    }
 
-        JsonNode body;
+    /**
+     * 发一次 GET 并把失败统一翻译成 20500。
+     *
+     * <p>{@code action} 只用于日志，不能拼进 URL——日志里一旦出现带 {@code key=} 的地址，
+     * Key 就跟着日志进了工单和截图。</p>
+     */
+    private JsonNode fetch(URI uri, String action) {
         try {
-            body = restClient.get()
-                    .uri(placeTextUri(keywords, city, page))
-                    .retrieve()
-                    .body(JsonNode.class);
+            return restClient.get().uri(uri).retrieve().body(JsonNode.class);
         } catch (RestClientResponseException ex) {
-            log.warn("高德 POI 搜索 HTTP 状态异常 status={} keywords={}", ex.getStatusCode().value(), keywords);
+            log.warn("高德{} HTTP 状态异常 status={}", action, ex.getStatusCode().value());
             throw new BizException(ErrorCode.GEO_PROVIDER_ERROR, "高德接口调用失败");
         } catch (ResourceAccessException ex) {
             // 只记异常类型：message 里带着含 key 的完整 URL
-            log.warn("高德 POI 搜索连接失败 type={} keywords={}", ex.getClass().getSimpleName(), keywords);
+            log.warn("高德{}连接失败 type={}", action, ex.getClass().getSimpleName());
             throw new BizException(ErrorCode.GEO_PROVIDER_ERROR, "高德接口超时或无法连接");
         }
-
-        requireSuccess(body);
-        return parsePois(body);
     }
 
     /**
@@ -139,5 +169,34 @@ public class AmapClient {
             pois.add(AmapPoi.from(poi));
         }
         return pois;
+    }
+
+    URI regeoUri(BigDecimal lng, BigDecimal lat) {
+        return UriComponentsBuilder.fromUriString(properties.baseUrl() + REGEO_PATH)
+                .queryParam("key", properties.key())
+                // 顺序是 lng,lat：写反了高德不报错，只会落到地球另一端
+                .queryParam("location", lng.toPlainString() + "," + lat.toPlainString())
+                .queryParam("extensions", "base")
+                .build().encode().toUri();
+    }
+
+    /**
+     * 从 {@code regeocode.addressComponent} 里取行政区。
+     *
+     * <p>直辖市的 {@code city} 是空数组，回落成省名（北京 → 北京市），否则前端填出来的
+     * 城市列会是空的。</p>
+     */
+    static Regeo parseRegeo(JsonNode body) {
+        JsonNode regeocode = body == null ? MissingNode.getInstance() : body.path("regeocode");
+        JsonNode component = regeocode.path("addressComponent");
+
+        String province = AmapPoi.text(component, "province");
+        String city = AmapPoi.text(component, "city");
+
+        return new Regeo(
+                province,
+                city != null ? city : province,
+                AmapPoi.text(component, "adcode"),
+                AmapPoi.text(regeocode, "formatted_address"));
     }
 }
