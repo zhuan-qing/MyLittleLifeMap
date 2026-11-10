@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hc.lifemap.common.api.ErrorCode;
 import com.hc.lifemap.place.dto.PageResult;
 import com.hc.lifemap.place.dto.PlaceListItemVO;
+import com.hc.lifemap.place.dto.PlaceVO;
 import com.hc.lifemap.place.entity.Place;
 import com.hc.lifemap.place.exception.BizException;
 import com.hc.lifemap.place.mapper.PlaceMapper;
@@ -51,6 +52,20 @@ public class PlaceQueryService {
         Page<Place> request = Page.of(page, normalizeSize(size));
         Page<Place> result = placeMapper.selectPage(request, timelineQuery(year));
         return PageResult.of(result, PlaceListItemVO::from);
+    }
+
+    /**
+     * 单条详情：点开列表里的一行时取全部字段。
+     *
+     * <p>软删的记录对外等同不存在，给 10404 而不是返回一条已删除的数据——否则前端收藏的旧链接
+     * 点进去还能看到内容，而列表里已经没有了。</p>
+     */
+    public PlaceVO detail(long id) {
+        Place place = placeMapper.selectById(id);
+        if (place == null || place.getDeletedAt() != null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "地点不存在");
+        }
+        return PlaceVO.from(place);
     }
 
     /**

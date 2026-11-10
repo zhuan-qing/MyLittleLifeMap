@@ -1,27 +1,40 @@
 package com.hc.lifemap.place.service;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.hc.lifemap.common.api.ErrorCode;
 import com.hc.lifemap.place.dto.PlaceCreateRequest;
+import com.hc.lifemap.place.dto.PlaceUpdateRequest;
 import com.hc.lifemap.place.dto.PlaceVO;
 import com.hc.lifemap.place.entity.Place;
 import com.hc.lifemap.place.exception.BizException;
 import com.hc.lifemap.place.mapper.PlaceMapper;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -54,6 +67,19 @@ class PlaceServiceTest {
     @BeforeEach
     void setUp() {
         placeCommandService = new PlaceCommandService(placeMapper);
+    }
+
+    /**
+     * 纯 Mockito 测试里没有 MyBatis 启动流程，{@code LambdaUpdateWrapper} 解析
+     * {@code Place::getRating} 这类方法引用时找不到 TableInfo，会抛
+     * {@code can not find lambda cache for this entity}。手动注册一次即可——
+     * 生产环境由 mapper 扫描完成这步。
+     */
+    @BeforeAll
+    static void registerTableInfo() {
+        MapperBuilderAssistant assistant = new MapperBuilderAssistant(new MybatisConfiguration(), "");
+        assistant.setCurrentNamespace("com.hc.lifemap.place.mapper.PlaceMapper");
+        TableInfoHelper.initTableInfo(assistant, Place.class);
     }
 
     /** 让 insert"成功并回填主键"，让 selectById 回查到刚插入的那一行。只在真正会落库的用例里调。 */
@@ -122,6 +148,88 @@ class PlaceServiceTest {
                         new BigDecimal("30.247482"), new BigDecimal("120.144521"), null)));
 
         assertEquals(ErrorCode.BAD_REQUEST, ex.errorCode());
+    }
+
+    /**
+     * 局部更新的核心是"没传的字段不能出现在 SET 子句里"。
+     *
+     * <p>所以断言直接看 wrapper 的 SET 子句，而不是看回查结果：桩里的 selectById 返回什么
+     * 完全由测试写，看不出服务到底写了几列。</p>
+     */
+    @Test
+    @DisplayName("局部更新只写传了的字段，并显式刷新 updatedAt")
+    @SuppressWarnings("unchecked")
+    void updateOnlyTouchesProvidedFields() {
+        when(placeMapper.selectById(GENERATED_ID)).thenReturn(existingPlace());
+
+        placeCommandService.update(GENERATED_ID, new PlaceUpdateRequest(
+                null, null, null, null, null, null, null, null, null, 4, "改了笔记"));
+
+        ArgumentCaptor<Wrapper<Place>> captor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(placeMapper).update(isNull(), captor.capture());
+        String sqlSet = ((LambdaUpdateWrapper<Place>) captor.getValue()).getSqlSet();
+
+        assertTrue(sqlSet.contains("rating="), "rating 应被写入：" + sqlSet);
+        assertTrue(sqlSet.contains("note="), "note 应被写入：" + sqlSet);
+        assertTrue(sqlSet.contains("updated_at="), "updated_at 必须显式刷新：" + sqlSet);
+        assertFalse(sqlSet.contains("name=") || sqlSet.contains("visited_on="),
+                "没传的字段不该出现在 SET 子句：" + sqlSet);
+    }
+
+    /** 一个字段都没传时不应该碰库：否则每次打开详情页再保存都会白改一次 {@code updated_at}。 */
+    @Test
+    @DisplayName("一个字段都没传时不产生写操作")
+    void updateWithoutFieldsDoesNotWrite() {
+        when(placeMapper.selectById(GENERATED_ID)).thenReturn(existingPlace());
+
+        PlaceVO vo = placeCommandService.update(GENERATED_ID, new PlaceUpdateRequest(
+                null, null, null, null, null, null, null, null, null, null, null));
+
+        verify(placeMapper, never()).update(any(), any());
+        assertEquals(existingPlace().getName(), vo.name());
+    }
+
+    /** 不存在与已软删对调用方是同一件事：都是"这条记录取不到"，都是 10404。 */
+    @Test
+    @DisplayName("id 不存在或已软删都返回 10404")
+    void updateRejectsMissingOrDeletedPlace() {
+        when(placeMapper.selectById(9999L)).thenReturn(null);
+        Place deleted = existingPlace();
+        deleted.setDeletedAt(OffsetDateTime.now());
+        when(placeMapper.selectById(GENERATED_ID)).thenReturn(deleted);
+
+        PlaceUpdateRequest request = new PlaceUpdateRequest(
+                null, null, null, null, null, null, null, null, null, 3, null);
+
+        assertEquals(ErrorCode.NOT_FOUND,
+                assertThrows(BizException.class, () -> placeCommandService.update(9999L, request)).errorCode());
+        assertEquals(ErrorCode.NOT_FOUND,
+                assertThrows(BizException.class, () -> placeCommandService.update(GENERATED_ID, request)).errorCode());
+    }
+
+    /** 只给经度时若拿库里的旧纬度凑一个点，会得到一个地图上根本不存在的坐标。 */
+    @Test
+    @DisplayName("只给经度或只给纬度时报 10400，不拿旧值凑一个点")
+    void updateRejectsUnpairedCoordinate() {
+        when(placeMapper.selectById(GENERATED_ID)).thenReturn(existingPlace());
+
+        PlaceUpdateRequest request = new PlaceUpdateRequest(
+                null, new BigDecimal("120.148871"), null, null, null, null, null, null, null, null, null);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> placeCommandService.update(GENERATED_ID, request));
+        assertEquals(ErrorCode.BAD_REQUEST, ex.errorCode());
+    }
+
+    /** 库里已有的一行，供更新用例当"回查结果"。 */
+    private Place existingPlace() {
+        Place place = new Place();
+        place.setId(GENERATED_ID);
+        place.setName("西湖");
+        place.setLng(BigDecimal.valueOf(GCJ_LNG));
+        place.setLat(BigDecimal.valueOf(GCJ_LAT));
+        place.setVisitedOn(LocalDate.of(2026, 10, 3));
+        return place;
     }
 
     /** 构造一个只关心坐标的请求，其余字段给最小合法值。 */
