@@ -16,10 +16,8 @@ import java.io.IOException;
 import java.util.UUID;
 
 /**
- * 链路 ID 入口：入站取 {@code X-Trace-Id}，没有就生成 16 位，写进 MDC 与响应头。
- *
- * <p>拦截器、Service、异常处理器都从 MDC 读它，日志 pattern 用 {@code %X{traceId}} 直接引用，
- * 所以同一请求的所有日志行能按 traceId 串起来；响应头作用相同，前端出错时报这个值即可反查。</p>
+ * 链路 ID 入口：入站取 {@code X-Trace-Id}，没有就生成 16 位，写进 MDC 与响应头，
+ * 日志 pattern 用 {@code %X{traceId}} 直接引用。
  *
  * <p>{@code finally} 里必须清 MDC：Tomcat 线程是复用的，不清会把上一个请求的 traceId
  * 带进下一个请求，排查时看到的是错号。</p>
@@ -28,7 +26,7 @@ import java.util.UUID;
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class TraceIdFilter extends OncePerRequestFilter {
 
-    /** 与网关生成的位数保持一致，16 位十六进制。 */
+    /** 与网关生成的位数一致。 */
     private static final int TRACE_ID_LENGTH = 16;
 
     @Override
@@ -44,7 +42,7 @@ public class TraceIdFilter extends OncePerRequestFilter {
         }
     }
 
-    /** 直连本服务调试时没有网关注入，这里自己兜一个，保证任何入口都带 traceId。 */
+    /** 直连本服务调试时没有网关注入，这里兜一个，保证任何入口都带 traceId。 */
     private String resolveTraceId(String inbound) {
         if (StringUtils.hasText(inbound)) {
             return inbound.trim();

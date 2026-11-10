@@ -10,8 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 探针：不碰数据库，只用来验证「统一响应体 + traceId + 错误码」这条骨架通了。
- *
- * <p>后续卡可以继续用它确认服务活着，P3 网关接入后也靠它验证 traceId 是否透传。</p>
+ * P3 接入网关后也靠它验证 traceId 是否透传。
  */
 @RestController
 @RequestMapping("/api")

@@ -17,20 +17,14 @@ import java.time.LocalDate;
 /**
  * 新增地点的入参（dev_doc §6.3 的 POST 契约）。
  *
- * <p>校验放在这里而不是 service：这三类错误（缺字段、越界、日期在未来）是前端表单能直接
- * 标红的，越早失败越好；{@code @Valid} 只在 {@code @RequestBody} 参数上生效，
- * 方法级别聚合由 {@code GlobalExceptionHandler} 负责拼成 10400。</p>
+ * <p>坐标用 {@link BigDecimal} 而不是 double：{@code NUMERIC(10,6)} 的末位在 double
+ * 序列化/反序列化里会抖，抖一次就是地图上偏出几十米。</p>
  *
- * <p>坐标一律 {@link BigDecimal}：NUMERIC(10,6) 走 double 会在末位丢精度，序列化/反序列化
- * 各抖一次就够让地图上的点偏出几十米。</p>
+ * <p>两套坐标都可以传，由 {@code PlaceCommandService} 判定哪套是真值并补算另一套；
+ * 这里不做互斥校验——同时从地图和照片取点本来就是合法输入。</p>
  *
- * <p>坐标为两套：{@code lng/lat} 是 GCJ-02（地图点击取点），{@code lngWgs/latWgs} 是
- * WGS-84（照片 EXIF 原值）。两套都可以给，由 {@code PlaceCommandService} 判定以哪套为
- * 真值并补算另一套；这里不做互斥校验——同时从地图和照片取点本来就是合法输入。</p>
- *
- * @param lngWgs 可空，但必须与 {@code latWgs} 成对出现，只给一个在 service 层报 10400
- * @param adcode 允许空串（表单没选行政区时会传 {@code ""}），service 会归一成 null；
- *               正则写成 {@code ^$|\d{6}} 就是为了让空串先过校验，别在库里撞 CHECK 约束
+ * @param adcode 允许空串（表单没选行政区时传 {@code ""}）；正则写成 {@code ^$|\d{6}}
+ *               就是为了让空串先过校验，别在库里撞 CHECK 约束
  */
 public record PlaceCreateRequest(
         @NotBlank(message = "地点名称不能为空")

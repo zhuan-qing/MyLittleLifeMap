@@ -15,13 +15,11 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import java.util.stream.Collectors;
 
 /**
- * 全局异常翻译：可预期的失败 → 统一响应体，HTTP 状态码一律 200。
+ * 全局异常翻译：可预期的失败一律 HTTP 200 + 业务码（dev_doc §6.2），
+ * 只有未捕获异常才落到 50000。
  *
- * <p>口径见 dev_doc §6.2：前端只判 {@code code}，不必同时处理两套语义；
- * 只有框架级未捕获异常才落到 50000。</p>
- *
- * <p><b>必须限定 basePackages</b>：不限包时 {@code /actuator/health} 也会被本 advice 接管，
- * 返回结构变成 {@code ApiResponse}，健康检查脚本会判失败。</p>
+ * <p><b>basePackages 必须限定在 controller</b>：不限包时 {@code /actuator/health} 也会被本
+ * advice 接管，返回结构变成 {@code ApiResponse}，健康检查脚本会判失败。</p>
  */
 @RestControllerAdvice(basePackages = "com.hc.lifemap.place.controller")
 public class GlobalExceptionHandler {
@@ -35,7 +33,7 @@ public class GlobalExceptionHandler {
         return ApiResponse.fail(ex.errorCode(), ex.getMessage());
     }
 
-    /** 请求体字段校验失败：拼成「字段 提示; 字段 提示」，一次性告诉前端所有问题。 */
+    /** 字段校验失败：拼成「字段 提示; 字段 提示」，一次性告诉前端所有问题。 */
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ApiResponse<Void> handleInvalidArgument(MethodArgumentNotValidException ex) {
         String detail = ex.getBindingResult().getFieldErrors().stream()
@@ -47,9 +45,8 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * 参数层还有两类异常不归 {@code @Valid} 管：类型转换失败（{@code ?year=abc}）、缺必填参数。
-     * <p>它们同属调用方错误，必须归到 10400；漏掉就会被下面的 {@code Exception} 兜底成 50000，
-     * 把"参数写错了"误报成"服务挂了"，后面每张卡的验证期望值都会跟着错。</p>
+     * 类型转换失败（{@code ?year=abc}）与缺必填参数不归 {@code @Valid} 管，
+     * 漏接就会被 {@code Exception} 兜底成 50000，把"参数写错了"误报成"服务挂了"。
      */
     @ExceptionHandler({MethodArgumentTypeMismatchException.class, MissingServletRequestParameterException.class})
     public ApiResponse<Void> handleBadParameter(Exception ex) {
@@ -61,15 +58,12 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * 请求体能读成 JSON、但某个字段的值转不过去（{@code "visitedOn":"2026/10/01"}、数字写成字符串）。
+     * 请求体能读成 JSON、但某字段的值转不过去（{@code "visitedOn":"2026/10/01"}）。
+     * 它在 Jackson 反序列化阶段就失败，{@code @Valid} 压根没机会执行。
      *
-     * <p>这一类同样属于调用方错误，但它在 {@code @Valid} 之前就失败了——Jackson 反序列化阶段抛
-     * {@link HttpMessageNotReadableException}，method 参数校验压根没机会执行。不单独接住就会落到
-     * 最后的 {@code Exception} 兜底变成 50000，把"日期格式写错"报成"服务故障"。</p>
-     *
-     * <p>沿着 cause 链找 {@link InvalidFormatException} 而不是直接取 {@code getMostSpecificCause()}：
-     * 后者会一路挖到根因，日期解析失败时最底层是 {@code DateTimeParseException}，它不带字段路径，
-     * 结果就是"字段名丢了"——而这正是这条提示唯一有用的信息。</p>
+     * <p>沿 cause 链找 {@link InvalidFormatException} 而不是取 {@code getMostSpecificCause()}：
+     * 日期解析失败的根因是 {@code DateTimeParseException}，不带字段路径，字段名会丢——
+     * 而那正是这条提示唯一有用的信息。</p>
      */
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ApiResponse<Void> handleUnreadableBody(HttpMessageNotReadableException ex) {

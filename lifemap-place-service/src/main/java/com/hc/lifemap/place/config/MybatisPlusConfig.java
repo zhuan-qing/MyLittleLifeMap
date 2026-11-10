@@ -8,9 +8,10 @@ import org.springframework.context.annotation.Configuration;
 
 /**
  * MyBatis-Plus 装配：注册分页内层拦截器。
- * <p>缺少该 Bean 时 {@code selectPage} 不会拼 {@code LIMIT}，结果退化成全表查询。</p>
- * <p>分页插件自 3.5.9 起迁到独立模块 {@code mybatis-plus-jsqlparser}，
- * 只引 starter 会在启动时报 {@code ClassNotFoundException: PaginationInnerInterceptor}。</p>
+ *
+ * <p>缺这个 Bean，{@code selectPage} 不会拼 {@code LIMIT}，退化成全表查询。分页插件自 3.5.9
+ * 起迁到独立模块 {@code mybatis-plus-jsqlparser}，只引 starter 会启动即
+ * {@code ClassNotFoundException: PaginationInnerInterceptor}。</p>
  */
 @Configuration
 public class MybatisPlusConfig {

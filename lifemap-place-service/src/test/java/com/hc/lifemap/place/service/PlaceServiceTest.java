@@ -11,12 +11,12 @@ import com.hc.lifemap.place.dto.PlaceVO;
 import com.hc.lifemap.place.entity.Place;
 import com.hc.lifemap.place.exception.BizException;
 import com.hc.lifemap.place.mapper.PlaceMapper;
-import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -38,15 +38,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 写到库里的四个坐标字段到底填了什么的单元测试。
+ * 写入侧的口径测试：坐标以哪套为真值、局部更新只改传了的字段、目标不存在时的错误码。
  *
- * <p>用 Mockito 而不是起 Spring 上下文：本卡要验证的是"判定口径"这一条纯逻辑，
- * 连数据库跑一遍会把 400 毫秒的启动时间和一个外部依赖挂到每次构建上，
- * 而真正需要真库验证的列映射早已在 {@code PlaceMapperTest} 里覆盖。</p>
- *
- * <p>{@code insert} 的桩会顺手把实体存进 {@link #inserted}、并回填 id：真实的
- * {@code created_at} 由 PG 生成，所以 service 落库后会 {@code selectById} 回查一次，
- * 桩必须让这条回查拿到刚插进去的那个对象，否则服务里的 {@code PlaceVO.from(null)} 会空指针。</p>
+ * <p>用 Mockito 而不起 Spring 上下文：这里验的是纯逻辑，真库的列映射已由
+ * {@code PlaceMapperTest} 覆盖。局部更新断言的是 update wrapper 的 SET 子句——
+ * 这正是"没传的字段会被写成 null"那类 bug 的唯一暴露点。</p>
  */
 @ExtendWith(MockitoExtension.class)
 class PlaceServiceTest {
@@ -71,7 +67,7 @@ class PlaceServiceTest {
 
     /**
      * 纯 Mockito 测试里没有 MyBatis 启动流程，{@code LambdaUpdateWrapper} 解析
-     * {@code Place::getRating} 这类方法引用时找不到 TableInfo，会抛
+     * {@code Place::getRating} 这类方法引用时找不到 TableInfo 会抛
      * {@code can not find lambda cache for this entity}。手动注册一次即可——
      * 生产环境由 mapper 扫描完成这步。
      */
@@ -82,40 +78,26 @@ class PlaceServiceTest {
         TableInfoHelper.initTableInfo(assistant, Place.class);
     }
 
-    /** 让 insert"成功并回填主键"，让 selectById 回查到刚插入的那一行。只在真正会落库的用例里调。 */
-    private void stubSuccessfulInsert() {
-        when(placeMapper.insert(any(Place.class))).thenAnswer(invocation -> {
-            Place place = invocation.getArgument(0);
-            place.setId(GENERATED_ID);
-            inserted.set(place);
-            return 1;
-        });
-        when(placeMapper.selectById(GENERATED_ID)).thenAnswer(invocation -> inserted.get());
-    }
-
     @Test
     @DisplayName("只给 GCJ 坐标时，自动反解出 WGS 并一起落库")
     void gcjOnlyInputFillsWgsColumns() {
         stubSuccessfulInsert();
 
-        PlaceVO vo = placeCommandService.create(request(new BigDecimal("120.148871"),
+        PlaceVO vo = placeCommandService.create(newCreateRequest(new BigDecimal("120.148871"),
                 new BigDecimal("30.247482"), null, null));
 
         Place saved = inserted.get();
         assertNotNull(saved, "insert 没有被调用");
-        // GCJ 原样保留
         assertEquals(0, new BigDecimal("120.148871").compareTo(saved.getLng()), "GCJ 经度不该被改动");
         assertEquals(0, new BigDecimal("30.247482").compareTo(saved.getLat()), "GCJ 纬度不该被改动");
-        // WGS 必须补出来，且在国内应比 GCJ 小约 0.004 度（杭州约 400 米）
         assertNotNull(saved.getLngWgs(), "lng_wgs 不能为 null");
         assertNotNull(saved.getLatWgs(), "lat_wgs 不能为 null");
+
         double lngShift = saved.getLng().doubleValue() - saved.getLngWgs().doubleValue();
         assertTrue(lngShift > 0.002 && lngShift < 0.006, "经度偏移量应在 0.002–0.006 度，实际 " + lngShift);
-        // 杭州一带纬度方向是反的：WGS 纬度比 GCJ 纬度大约 0.0023 度。这条断言专防"两套抄成一套"
+        // 杭州一带纬度方向相反：WGS 纬度比 GCJ 纬度大。这条专防"两套抄成一套"
         assertTrue(saved.getLatWgs().compareTo(saved.getLat()) > 0, "此处 WGS 纬度应大于 GCJ 纬度");
 
-        // 出参也带上两套坐标，前端详情页能直接看
-        assertNotNull(vo.lngWgs());
         assertEquals(saved.getLngWgs(), vo.lngWgs());
     }
 
@@ -124,38 +106,27 @@ class PlaceServiceTest {
     void wgsInputOverridesGcj() {
         stubSuccessfulInsert();
 
-        PlaceVO vo = placeCommandService.create(request(BigDecimal.ZERO, BigDecimal.ZERO,
+        placeCommandService.create(newCreateRequest(BigDecimal.ZERO, BigDecimal.ZERO,
                 new BigDecimal("120.144521"), new BigDecimal("30.245103")));
 
         Place saved = inserted.get();
-        // WGS 原值被完整保留
         assertEquals(0, new BigDecimal("120.144521").compareTo(saved.getLngWgs()), "WGS 经度不该被改动");
         assertEquals(0, new BigDecimal("30.245103").compareTo(saved.getLatWgs()), "WGS 纬度不该被改动");
-        // GCJ 由正算得到，不是请求里那两个 0。
-        // 注意杭州处纬度偏移是负的：WGS(30.245103) 正算后 GCJ 纬度约 30.242790，比原值更小。
-        // 偏移方向随地区变号（北京、乌鲁木齐为正，上海、杭州为负），别按"总是往北偏"写断言。
+        // 偏移方向随地区变号：北京、乌鲁木齐为正，上海、杭州为负
         assertEquals(120.1492, saved.getLng().doubleValue(), 5e-4, "GCJ 经度应由正算得到");
         assertEquals(30.2428, saved.getLat().doubleValue(), 5e-4, "GCJ 纬度应由正算得到");
-
-        assertNotNull(vo.lng());
     }
 
     @Test
     @DisplayName("WGS 只给一半时报 10400，不猜另一半")
     void halfPairWgsIsRejected() {
         BizException ex = assertThrows(BizException.class,
-                () -> placeCommandService.create(request(new BigDecimal("120.148871"),
+                () -> placeCommandService.create(newCreateRequest(new BigDecimal("120.148871"),
                         new BigDecimal("30.247482"), new BigDecimal("120.144521"), null)));
 
         assertEquals(ErrorCode.BAD_REQUEST, ex.errorCode());
     }
 
-    /**
-     * 局部更新的核心是"没传的字段不能出现在 SET 子句里"。
-     *
-     * <p>所以断言直接看 wrapper 的 SET 子句，而不是看回查结果：桩里的 selectById 返回什么
-     * 完全由测试写，看不出服务到底写了几列。</p>
-     */
     @Test
     @DisplayName("局部更新只写传了的字段，并显式刷新 updatedAt")
     @SuppressWarnings("unchecked")
@@ -176,7 +147,6 @@ class PlaceServiceTest {
                 "没传的字段不该出现在 SET 子句：" + sqlSet);
     }
 
-    /** 一个字段都没传时不应该碰库：否则每次打开详情页再保存都会白改一次 {@code updated_at}。 */
     @Test
     @DisplayName("一个字段都没传时不产生写操作")
     void updateWithoutFieldsDoesNotWrite() {
@@ -189,7 +159,6 @@ class PlaceServiceTest {
         assertEquals(existingPlace().getName(), vo.name());
     }
 
-    /** 不存在与已软删对调用方是同一件事：都是"这条记录取不到"，都是 10404。 */
     @Test
     @DisplayName("id 不存在或已软删都返回 10404")
     void updateRejectsMissingOrDeletedPlace() {
@@ -207,7 +176,6 @@ class PlaceServiceTest {
                 assertThrows(BizException.class, () -> placeCommandService.update(GENERATED_ID, request)).errorCode());
     }
 
-    /** 只给经度时若拿库里的旧纬度凑一个点，会得到一个地图上根本不存在的坐标。 */
     @Test
     @DisplayName("只给经度或只给纬度时报 10400，不拿旧值凑一个点")
     void updateRejectsUnpairedCoordinate() {
@@ -221,7 +189,17 @@ class PlaceServiceTest {
         assertEquals(ErrorCode.BAD_REQUEST, ex.errorCode());
     }
 
-    /** 库里已有的一行，供更新用例当"回查结果"。 */
+    /** 让 insert"成功并回填主键"，让 selectById 回查到刚插入的那一行。 */
+    private void stubSuccessfulInsert() {
+        when(placeMapper.insert(any(Place.class))).thenAnswer(invocation -> {
+            Place place = invocation.getArgument(0);
+            place.setId(GENERATED_ID);
+            inserted.set(place);
+            return 1;
+        });
+        when(placeMapper.selectById(GENERATED_ID)).thenAnswer(invocation -> inserted.get());
+    }
+
     private Place existingPlace() {
         Place place = new Place();
         place.setId(GENERATED_ID);
@@ -232,9 +210,9 @@ class PlaceServiceTest {
         return place;
     }
 
-    /** 构造一个只关心坐标的请求，其余字段给最小合法值。 */
-    private PlaceCreateRequest request(BigDecimal lng, BigDecimal lat,
-                                       BigDecimal lngWgs, BigDecimal latWgs) {
+    /** 只关心坐标的新增请求，其余字段给最小合法值。 */
+    private PlaceCreateRequest newCreateRequest(BigDecimal lng, BigDecimal lat,
+                                                BigDecimal lngWgs, BigDecimal latWgs) {
         return new PlaceCreateRequest("西湖", lng, lat, lngWgs, latWgs,
                 null, null, null, LocalDate.of(2026, 10, 3), 5, null);
     }
