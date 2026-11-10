@@ -3,14 +3,18 @@ package com.hc.lifemap.place.service;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.hc.lifemap.common.api.ErrorCode;
+import com.hc.lifemap.place.constant.PlaceEventType;
 import com.hc.lifemap.place.dto.PlaceCreateRequest;
 import com.hc.lifemap.place.dto.PlaceUpdateRequest;
 import com.hc.lifemap.place.dto.PlaceVO;
 import com.hc.lifemap.place.entity.Place;
+import com.hc.lifemap.place.entity.PlaceEvent;
 import com.hc.lifemap.place.exception.BizException;
+import com.hc.lifemap.place.mapper.PlaceEventMapper;
 import com.hc.lifemap.place.mapper.PlaceMapper;
 import com.hc.lifemap.place.util.CoordinateConverter;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -26,9 +30,11 @@ import java.time.OffsetDateTime;
 public class PlaceCommandService {
 
     private final PlaceMapper placeMapper;
+    private final PlaceEventMapper placeEventMapper;
 
-    public PlaceCommandService(PlaceMapper placeMapper) {
+    public PlaceCommandService(PlaceMapper placeMapper, PlaceEventMapper placeEventMapper) {
         this.placeMapper = placeMapper;
+        this.placeEventMapper = placeEventMapper;
     }
 
     /**
@@ -118,6 +124,42 @@ public class PlaceCommandService {
         update.set(Place::getUpdatedAt, OffsetDateTime.now());
         placeMapper.update(null, update);
         return PlaceVO.from(placeMapper.selectById(id));
+    }
+
+    /**
+     * 软删：只打删除标记并留一条事件，照片由 media 侧对账清理（P6-T03）。
+     *
+     * <p>两步必须同一事务：只置标记不写事件，照片永远没人清理；写了事件标记没落，
+     * media 会去处理一条还活着的记录。</p>
+     *
+     * <p>幂等：重复删、删不存在的 id 都直接返回成功，不报 10404、不重复写事件——
+     * DELETE 对同一目标调任意次结果应当一致。</p>
+     */
+    @Transactional
+    public void delete(long id) {
+        Place existing = placeMapper.selectById(id);
+        if (existing == null || existing.getDeletedAt() != null) {
+            return;
+        }
+
+        OffsetDateTime now = OffsetDateTime.now();
+        // 条件里再判一次 isNull(deletedAt)：先查后改之间若被并发删掉，这次 update 影响 0 行，
+        // 据此跳过事件，避免同一地点留下两条 PLACE_DELETED
+        int affected = placeMapper.update(null, Wrappers.lambdaUpdate(Place.class)
+                .eq(Place::getId, id)
+                .isNull(Place::getDeletedAt)
+                .set(Place::getDeletedAt, now)
+                .set(Place::getUpdatedAt, now));
+        if (affected == 0) {
+            return;
+        }
+
+        PlaceEvent event = new PlaceEvent();
+        event.setPlaceId(id);
+        event.setEventType(PlaceEventType.PLACE_DELETED.name());
+        // 0 = 待处理，与 place_event.status 的列注释一致；payload 未映射，交给列默认值 '{}'
+        event.setStatus(0);
+        placeEventMapper.insert(event);
     }
 
     /** 取一条未软删的记录；不存在或已删都是 10404（对调用方而言没有区别）。 */

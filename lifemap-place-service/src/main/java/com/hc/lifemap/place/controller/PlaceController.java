@@ -9,6 +9,7 @@ import com.hc.lifemap.place.dto.PlaceVO;
 import com.hc.lifemap.place.service.PlaceCommandService;
 import com.hc.lifemap.place.service.PlaceQueryService;
 import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -19,7 +20,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 地点 REST 入口：列表、详情、新增、修改（删除由 T09 加）。
+ * 地点 REST 入口：列表、详情、新增、修改、软删（P1 的 CRUD 到此收齐）。
  *
  * <p>controller 只做两件事：把请求绑到方法参数、把结果套进统一响应体。参数范围校验
  * （{@code page<1} → 10400、{@code size} 夹到 100）在 {@link PlaceQueryService}——
@@ -80,5 +81,17 @@ public class PlaceController {
     @PutMapping("/{id}")
     public ApiResponse<PlaceVO> update(@PathVariable long id, @Valid @RequestBody PlaceUpdateRequest request) {
         return ApiResponse.ok(placeCommandService.update(id, request));
+    }
+
+    /**
+     * 软删：置 {@code deleted_at} 并写一条 {@code PLACE_DELETED} 事件，照片由 media 侧对账清理。
+     *
+     * <p>幂等，成功时 {@code data} 为 null：重复删、删不存在的 id 都是 code=0，
+     * 前端不必区分"刚删掉"和"早就删了"。</p>
+     */
+    @DeleteMapping("/{id}")
+    public ApiResponse<Void> delete(@PathVariable long id) {
+        placeCommandService.delete(id);
+        return ApiResponse.ok();
     }
 }

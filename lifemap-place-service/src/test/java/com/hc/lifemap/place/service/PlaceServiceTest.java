@@ -5,11 +5,14 @@ import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.hc.lifemap.common.api.ErrorCode;
+import com.hc.lifemap.place.constant.PlaceEventType;
 import com.hc.lifemap.place.dto.PlaceCreateRequest;
 import com.hc.lifemap.place.dto.PlaceUpdateRequest;
 import com.hc.lifemap.place.dto.PlaceVO;
 import com.hc.lifemap.place.entity.Place;
+import com.hc.lifemap.place.entity.PlaceEvent;
 import com.hc.lifemap.place.exception.BizException;
+import com.hc.lifemap.place.mapper.PlaceEventMapper;
 import com.hc.lifemap.place.mapper.PlaceMapper;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -56,13 +59,16 @@ class PlaceServiceTest {
     @Mock
     private PlaceMapper placeMapper;
 
+    @Mock
+    private PlaceEventMapper placeEventMapper;
+
     private final AtomicReference<Place> inserted = new AtomicReference<>();
 
     private PlaceCommandService placeCommandService;
 
     @BeforeEach
     void setUp() {
-        placeCommandService = new PlaceCommandService(placeMapper);
+        placeCommandService = new PlaceCommandService(placeMapper, placeEventMapper);
     }
 
     /**
@@ -187,6 +193,67 @@ class PlaceServiceTest {
         BizException ex = assertThrows(BizException.class,
                 () -> placeCommandService.update(GENERATED_ID, request));
         assertEquals(ErrorCode.BAD_REQUEST, ex.errorCode());
+    }
+
+    /** 软删要同时落地两件事：标记与事件。只写其中一件都会让照片永远没人清理。 */
+    @Test
+    @DisplayName("软删写入 deleted_at 并留下一条待处理事件")
+    @SuppressWarnings("unchecked")
+    void deleteMarksRowAndWritesEvent() {
+        when(placeMapper.selectById(GENERATED_ID)).thenReturn(existingPlace());
+        when(placeMapper.update(isNull(), any())).thenReturn(1);
+
+        placeCommandService.delete(GENERATED_ID);
+
+        ArgumentCaptor<Wrapper<Place>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(placeMapper).update(isNull(), wrapperCaptor.capture());
+        String sqlSet = ((LambdaUpdateWrapper<Place>) wrapperCaptor.getValue()).getSqlSet();
+        assertTrue(sqlSet.contains("deleted_at="), "deleted_at 应被写入：" + sqlSet);
+
+        ArgumentCaptor<PlaceEvent> eventCaptor = ArgumentCaptor.forClass(PlaceEvent.class);
+        verify(placeEventMapper).insert(eventCaptor.capture());
+        PlaceEvent event = eventCaptor.getValue();
+        assertEquals(GENERATED_ID, event.getPlaceId());
+        assertEquals(PlaceEventType.PLACE_DELETED.name(), event.getEventType());
+        assertEquals(0, event.getStatus(), "新事件必须是待处理");
+    }
+
+    /** 重复删不能再写第二条事件，否则 media 会对同一批照片重复处理。 */
+    @Test
+    @DisplayName("重复软删不再写库，也不抛错")
+    void deleteIsIdempotent() {
+        Place deleted = existingPlace();
+        deleted.setDeletedAt(OffsetDateTime.now());
+        when(placeMapper.selectById(GENERATED_ID)).thenReturn(deleted);
+
+        placeCommandService.delete(GENERATED_ID);
+
+        verify(placeMapper, never()).update(any(), any());
+        verify(placeEventMapper, never()).insert(any(PlaceEvent.class));
+    }
+
+    /** 删一个不存在的 id 也返回成功：DELETE 的幂等语义不该因为"本来就没有"而变成错误。 */
+    @Test
+    @DisplayName("删不存在的 id 静默成功")
+    void deleteMissingIdIsSilent() {
+        when(placeMapper.selectById(9999L)).thenReturn(null);
+
+        placeCommandService.delete(9999L);
+
+        verify(placeMapper, never()).update(any(), any());
+        verify(placeEventMapper, never()).insert(any(PlaceEvent.class));
+    }
+
+    /** 并发场景：先查后改之间别人已经删掉，update 影响 0 行，就不该再补一条事件。 */
+    @Test
+    @DisplayName("条件更新未命中时不写事件")
+    void deleteSkipsEventWhenRowAlreadyGone() {
+        when(placeMapper.selectById(GENERATED_ID)).thenReturn(existingPlace());
+        when(placeMapper.update(isNull(), any())).thenReturn(0);
+
+        placeCommandService.delete(GENERATED_ID);
+
+        verify(placeEventMapper, never()).insert(any(PlaceEvent.class));
     }
 
     /** 让 insert"成功并回填主键"，让 selectById 回查到刚插入的那一行。 */
