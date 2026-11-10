@@ -6,7 +6,11 @@ import com.hc.lifemap.place.dto.PlaceVO;
 import com.hc.lifemap.place.entity.Place;
 import com.hc.lifemap.place.exception.BizException;
 import com.hc.lifemap.place.mapper.PlaceMapper;
+import com.hc.lifemap.place.util.CoordinateConverter;
 import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 
 /**
  * 地点写入侧：新增（T05）、局部更新与软删（T08/T09）。
@@ -44,8 +48,7 @@ public class PlaceCommandService {
 
         Place place = new Place();
         place.setName(name);
-        place.setLng(request.lng());
-        place.setLat(request.lat());
+        applyCoordinates(place, request);
         place.setAdcode(blankToNull(request.adcode()));
         place.setProvince(blankToNull(request.province()));
         place.setCity(blankToNull(request.city()));
@@ -55,6 +58,57 @@ public class PlaceCommandService {
 
         placeMapper.insert(place);
         return PlaceVO.from(placeMapper.selectById(place.getId()));
+    }
+
+    /**
+     * 判定以哪套坐标为真值，并补算出另一套写进实体（口径写死，别改）：
+     *
+     * <pre>
+     * 传了 lngWgs/latWgs  → 以它为 WGS-84 真值，正算得到 GCJ 存 lng/lat
+     * 没传                → 把 lng/lat 当 GCJ 真值，反解得到 WGS 存 lng_wgs/lat_wgs
+     * 两者都传但互相矛盾   → 以 WGS 为准（EXIF 是原始数据，GCJ 是派生数据）
+     * </pre>
+     *
+     * <p>为什么"WGS 优先"：地图点击取点其实也是拿 WGS 算出来再转 GCJ 的，EXIF 则是设备直接写的
+     * 原始值。两套打架时信原始值，派生值无论怎么错都能重算，原始值丢了就再也拿不回来。</p>
+     *
+     * <p>只给一半（只 {@code lngWgs} 或只 {@code latWgs}）报 10400 而不是"凑合用另一半"：
+     * 那说明调用方装配请求时出了 bug，静默接受会写进一个经纬度来自两个城市的点，
+     * 在地图上看着"有值"，实际无从发现。</p>
+     *
+     * <p>结果统一按 6 位小数、{@code HALF_UP} 落 {@link BigDecimal}——与 {@code NUMERIC(10,6)}
+     * 对齐。不截断，是因为截断会让正算/反解的往返误差单向累积。</p>
+     */
+    private void applyCoordinates(Place place, PlaceCreateRequest request) {
+        boolean hasWgsLng = request.lngWgs() != null;
+        boolean hasWgsLat = request.latWgs() != null;
+        if (hasWgsLng != hasWgsLat) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "lngWgs 与 latWgs 必须成对出现");
+        }
+
+        if (hasWgsLng) {
+            double wgsLng = request.lngWgs().doubleValue();
+            double wgsLat = request.latWgs().doubleValue();
+            double[] gcj = CoordinateConverter.wgs84ToGcj02(wgsLng, wgsLat);
+            place.setLng(toCoordinate(gcj[0]));
+            place.setLat(toCoordinate(gcj[1]));
+            place.setLngWgs(toCoordinate(wgsLng));
+            place.setLatWgs(toCoordinate(wgsLat));
+            return;
+        }
+
+        double gcjLng = request.lng().doubleValue();
+        double gcjLat = request.lat().doubleValue();
+        double[] wgs = CoordinateConverter.gcj02ToWgs84(gcjLng, gcjLat);
+        place.setLng(toCoordinate(gcjLng));
+        place.setLat(toCoordinate(gcjLat));
+        place.setLngWgs(toCoordinate(wgs[0]));
+        place.setLatWgs(toCoordinate(wgs[1]));
+    }
+
+    /** double → NUMERIC(10,6) 的定点数。 */
+    private BigDecimal toCoordinate(double value) {
+        return BigDecimal.valueOf(value).setScale(6, RoundingMode.HALF_UP);
     }
 
     /**
