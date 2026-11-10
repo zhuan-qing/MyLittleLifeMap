@@ -18,7 +18,7 @@ import java.time.OffsetDateTime;
  * {@code write-dates-as-timestamps} 打开，不加注解就会静默变成一串数字，前端
  * {@code new Date(...)} 还能跑，但和列表页的日期格式会对不上。</p>
  *
- * @param lngWgs WGS-84 经度。P1-T07 之前恒为 null（尚未接入坐标转换），字段先留在契约里
+ * @param lngWgs WGS-84 经度，入库时由坐标转换补算（P1-T07），新增/详情返回时必然有值
  */
 public record PlaceVO(
         Long id,
