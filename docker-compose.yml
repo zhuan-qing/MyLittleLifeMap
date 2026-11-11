@@ -1,4 +1,4 @@
-# P0 中间件编排：PostgreSQL / Redis / MinIO / Nacos
+# P0 中间件编排：PostgreSQL / Redis / RustFS / Nacos
 #
 # 只负责"稳定依赖"，四个业务服务在宿主机用 JVM 跑（改代码热重启，不必反复打镜像）。
 # 全部端口只绑 127.0.0.1，本机自用，不对局域网暴露。
@@ -92,23 +92,32 @@ services:
     logging: *default-logging
     networks: [lifemap-net]
 
-  minio:
-    image: ${MINIO_IMAGE:-minio/minio:latest}
-    container_name: lifemap-minio
+  # 对象存储：RustFS（Apache 2.0，S3 兼容）。替换了原来的 MinIO——社区版已停维护。
+  rustfs:
+    image: ${RUSTFS_IMAGE:-rustfs/rustfs:1.0.0}
+    container_name: lifemap-rustfs
     restart: unless-stopped
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-lifemap}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-lifemap_dev_2026}
+      # S3 API 与控制台分开监听；控制台路径带前缀 /rustfs/console/
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_OBS_LOGGER_LEVEL: warn
+      RUSTFS_OBS_LOG_DIRECTORY: /logs
       TZ: Asia/Shanghai
-    command: ["server", "/data", "--console-address", ":9001"]
+    # 唯一的位置参数是数据目录，与镜像默认的 RUSTFS_VOLUMES 一致
+    command: ["/data"]
     ports:
-      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
-      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "127.0.0.1:${RUSTFS_API_PORT:-9000}:9000"
+      - "127.0.0.1:${RUSTFS_CONSOLE_PORT:-9001}:9001"
     volumes:
-      - miniodata:/data
+      # 用命名卷而不是宿主目录：容器以 uid 10001 运行，挂宿主目录要先 chown
+      - rustfsdata:/data
+      - rustfslogs:/logs
     healthcheck:
-      # minio 镜像自带 mc，官方推荐用 mc ready；curl 兜底防镜像变体没带 mc
-      test: ["CMD-SHELL", "mc ready local || curl -fsS http://127.0.0.1:9000/minio/health/live"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -117,28 +126,17 @@ services:
     logging: *default-logging
     networks: [lifemap-net]
 
-  # 一次性任务：建桶 + 关掉匿名访问。跑完即退出，不占常驻资源
-  minio-init:
+  # S3 命令行工具（mc）。不是服务端，常驻只为 docker compose exec 方便：
+  # 建桶、查对象、跑备份。桶的初始化由 media-service 启动时自己做，这里只做人工排查。
+  s3cli:
     image: ${MC_IMAGE:-minio/mc:latest}
-    container_name: lifemap-minio-init
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
-      MINIO_BUCKET: ${MINIO_BUCKET:-lifemap}
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
-        mc mb --ignore-existing "local/$$MINIO_BUCKET"
-        mc mb --ignore-existing "local/$$MINIO_BUCKET-backup"
-        mc anonymous set none "local/$$MINIO_BUCKET"
-        echo "buckets ready:"
-        mc ls local
+    container_name: lifemap-s3cli
     restart: "no"
+    entrypoint: ["/bin/sh", "-c", "sleep infinity"]
+    environment:
+      # mc 认 MC_HOST_<别名>，省掉每次 mc alias set
+      MC_HOST_local: "http://${RUSTFS_ACCESS_KEY:-lifemap}:${RUSTFS_SECRET_KEY:-lifemap_dev_2026}@rustfs:9000"
+    mem_limit: 32m
     logging: *default-logging
     networks: [lifemap-net]
 
@@ -177,7 +175,8 @@ services:
 volumes:
   pgdata:
   redisdata:
-  miniodata:
+  rustfsdata:
+  rustfslogs:
   nacosdata:
   nacoslogs:
 

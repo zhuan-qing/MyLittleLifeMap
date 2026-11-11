@@ -5,7 +5,8 @@
 lifemap:
   env: dev
   storage:
-    minio:
+    # 键名必须与 application.yaml 的 lifemap.storage.s3 对齐，否则这里配了不生效
+    s3:
       bucket: lifemap
   image:
     # 详情大图长边 2048px，WebP，质量 0.82

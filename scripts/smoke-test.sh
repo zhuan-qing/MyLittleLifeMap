@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # P0 验收脚本：中间件全部可连通。
-# 覆盖 dev_doc §9 P0 交付物：PG 三库、Redis、MinIO 桶、Nacos namespace 与四个 group 配置，
+# 覆盖 dev_doc §9 P0 交付物：PG 三库、Redis、RustFS 桶、Nacos namespace 与四个 group 配置，
 # 外加四个业务服务的探活（服务没起时只提示，不算失败，P0 验收目标是"中间件可连通"）。
 #
 # 用法（在 MyLittleLifeMap-backend 目录下）：
@@ -24,8 +24,8 @@ POSTGRES_USER="${POSTGRES_USER:-lifemap}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 REDIS_PASSWORD="${REDIS_PASSWORD:-lifemap_dev_2026}"
 REDIS_PORT="${REDIS_PORT:-6379}"
-MINIO_API_PORT="${MINIO_API_PORT:-9000}"
-MINIO_BUCKET="${MINIO_BUCKET:-lifemap}"
+RUSTFS_API_PORT="${RUSTFS_API_PORT:-9000}"
+RUSTFS_BUCKET="${RUSTFS_BUCKET:-lifemap}"
 NACOS_PORT="${NACOS_PORT:-8848}"
 NACOS_NAMESPACE="${NACOS_NAMESPACE:-lifemap-dev}"
 
@@ -41,7 +41,7 @@ section() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 # ---------------------------------------------------------------- 容器状态
 section "1. 容器状态"
 running="$(docker compose ps --services --status running 2>/dev/null || true)"
-for svc in postgres redis minio nacos; do
+for svc in postgres redis rustfs nacos; do
   if printf '%s\n' "${running}" | grep -qx "${svc}"; then
     ok "${svc} 运行中"
   else
@@ -79,22 +79,24 @@ else
   bad "Redis 不可连接或密码错误"
 fi
 
-# ---------------------------------------------------------------- MinIO
-section "4. MinIO"
-if curl -fsS "http://127.0.0.1:${MINIO_API_PORT}/minio/health/live" >/dev/null 2>&1; then
-  ok "健康检查通过（API ${MINIO_API_PORT} / 控制台 ${MINIO_CONSOLE_PORT:-9001}）"
+# ---------------------------------------------------------------- RustFS
+section "4. RustFS（S3 兼容对象存储）"
+if curl -fsS "http://127.0.0.1:${RUSTFS_API_PORT}/health" >/dev/null 2>&1; then
+  ok "健康检查通过（API ${RUSTFS_API_PORT} / 控制台 ${RUSTFS_CONSOLE_PORT:-9001}/rustfs/console/）"
 else
-  bad "MinIO 健康检查失败"
+  bad "RustFS 健康检查失败"
 fi
 
-if bucket_list="$(docker compose run --rm --no-deps minio-init 2>/dev/null)"; then
-  if printf '%s' "${bucket_list}" | grep -q "${MINIO_BUCKET}"; then
-    ok "桶 ${MINIO_BUCKET} 就绪（含 ${MINIO_BUCKET}-backup）"
+# 建桶与列桶都走 s3cli（mc 客户端），别名已由 MC_HOST_local 注入
+if docker compose exec -T s3cli mc mb --ignore-existing "local/${RUSTFS_BUCKET}" >/dev/null 2>&1 \
+   && docker compose exec -T s3cli mc mb --ignore-existing "local/${RUSTFS_BUCKET}-backup" >/dev/null 2>&1; then
+  if docker compose exec -T s3cli mc ls local 2>/dev/null | grep -q "${RUSTFS_BUCKET}/"; then
+    ok "桶 ${RUSTFS_BUCKET} 就绪（含 ${RUSTFS_BUCKET}-backup）"
   else
-    bad "桶 ${MINIO_BUCKET} 未创建"
+    bad "桶 ${RUSTFS_BUCKET} 未创建"
   fi
 else
-  bad "minio-init 执行失败，无法确认桶"
+  bad "s3cli 执行失败，无法确认桶"
 fi
 
 # ---------------------------------------------------------------- Nacos

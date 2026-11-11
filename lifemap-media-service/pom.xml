@@ -11,7 +11,7 @@
 
 	<artifactId>lifemap-media-service</artifactId>
 	<name>lifemap-media-service</name>
-	<description>媒体服务：照片上传、方向纠正、WebP 与缩略图、MinIO 读写（数据归属 media_db + MinIO）</description>
+	<description>媒体服务：照片上传、方向纠正、WebP 与缩略图、对象存储读写（数据归属 media_db + RustFS）</description>
 
 	<dependencies>
 		<dependency>
@@ -55,10 +55,11 @@
 			<scope>runtime</scope>
 		</dependency>
 
+		<!-- S3 客户端：RustFS 是 S3 兼容的，直接用 AWS SDK v2，不绑任何一家实现 -->
 		<dependency>
-			<groupId>io.minio</groupId>
-			<artifactId>minio</artifactId>
-			<version>${minio.version}</version>
+			<groupId>software.amazon.awssdk</groupId>
+			<artifactId>s3</artifactId>
+			<version>${awssdk.version}</version>
 		</dependency>
 
 		<dependency>

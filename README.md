@@ -43,7 +43,7 @@ swap=2GB
 ```bash
 cp .env.example .env          # 首次；密码都在这里改
 docker compose --env-file .env up -d
-docker compose ps             # 等到 postgres / redis / minio / nacos 都是 healthy
+docker compose ps             # 等到 postgres / redis / rustfs / nacos 都是 healthy
 ./scripts/nacos-init.sh       # 建 namespace 与四个 group 的配置
 ./scripts/smoke-test.sh       # P0 验收
 ```
@@ -61,8 +61,8 @@ docker compose down -v        # 连数据卷一起删 —— 会丢全部数据
 | --- | --- | --- | --- |
 | PostgreSQL | 5432 | `lifemap` / `lifemap_dev_2026` | 库：`place_db`、`media_db`、`nacos` |
 | Redis | 6379 | 密码同上 | AOF 开启，maxmemory 96MB |
-| MinIO API | 9000 | `minioadmin` / `minioadmin123` | 桶：`lifemap`、`lifemap-backup` |
-| MinIO 控制台 | 9001 | 同上 | http://127.0.0.1:9001 |
+| RustFS S3 API | 9000 | `lifemap` / `lifemap_dev_2026` | 桶：`lifemap`、`lifemap-backup`（S3 兼容，`api` 路径式寻址） |
+| RustFS 控制台 | 9001 | 同上 | http://127.0.0.1:9001/rustfs/console/ |
 | Nacos | 8848 / 9848 | 开发环境关鉴权 | http://127.0.0.1:8848/nacos |
 
 四个业务服务（宿主直跑时）：gateway 8080、place 8081、media 8082、stats 8083；前端 Vite 5173，`/api` 代理到 8080。
@@ -78,7 +78,7 @@ pom.xml                     聚合父 POM，统一版本
 lifemap-common/             统一响应体 ApiResponse、错误码、链路头常量（无第三方依赖）
 lifemap-gateway/            8080 路由与鉴权，反应式栈
 lifemap-place-service/      8081 地点与地理编码，独占 place_db
-lifemap-media-service/      8082 图片管线，独占 media_db + MinIO
+lifemap-media-service/      8082 图片管线，独占 media_db + RustFS
 lifemap-stats-service/      8083 省市点亮聚合，无库，结果进 Redis
 docker-compose.yml          P0 中间件编排（业务服务跑宿主机 JVM，不打镜像）
 deploy/postgres/init/       首次启动建三库，幂等
@@ -109,7 +109,7 @@ scripts/smoke-test.sh       P0 验收
 1. 五个容器运行且 healthy
 2. PostgreSQL 可连接，`place_db` / `media_db` / `nacos` 三库存在
 3. Redis `PING` 返回 `PONG`
-4. MinIO 健康检查通过，`lifemap` 桶存在且禁止匿名访问
+4. RustFS 健康检查通过，`lifemap` 桶存在且禁止匿名访问
 5. Nacos readiness 为 UP，`lifemap-dev` namespace 下四组配置齐全
 6. 四个业务服务探活（可选，服务没起只提示不算失败）
 
@@ -123,7 +123,7 @@ scripts/smoke-test.sh       P0 验收
 
 **Nacos 连不上**：除了 8848，2.x 还要 9848（gRPC，端口号 = 8848 + 1000）。宿主防火墙放开这两个，否则服务注册一直转圈。
 
-**镜像拉不下来**：国内直连 Docker Hub 基本不通，实测 `docker.xuanyuan.me` / `docker.1ms.run` 对 `minio/*` 直接返回 403。所以镜像地址全放在 `.env` 的 `*_IMAGE` 变量里，当前用的是轩辕与 1Panel 两个镜像站（轩辕需要登录：`docker login docker.xuanyuan.run`）。哪天某个源挂了，只改 `.env` 里对应一行，compose 文件不用动。
+**镜像拉不下来**：国内直连 Docker Hub 大部分镜像被拦，实测 `docker.xuanyuan.me` / `docker.1ms.run` 对 `minio/*` 直接返回 403。所以镜像地址全放在 `.env` 的 `*_IMAGE` 变量里：postgres / nacos 走轩辕（需 `docker login docker.xuanyuan.run`），`mc` 走 1Panel，`rustfs/rustfs:1.0.0` 实测可直连 Docker Hub。哪天某个源挂了，只改 `.env` 里对应一行，compose 文件不用动。
 
 **端口被占**：`.env` 里改 `POSTGRES_PORT` / `REDIS_PORT` / `NACOS_PORT` 等，服务端配置读的是同一批环境变量。
 

@@ -33,7 +33,15 @@
 		<spring-cloud.version>2023.0.3</spring-cloud.version>
 		<spring-cloud-alibaba.version>2023.0.3.2</spring-cloud-alibaba.version>
 		<mybatis-plus.version>3.5.16</mybatis-plus.version>
-		<minio.version>8.5.12</minio.version>
+		<!-- 对象存储客户端：RustFS / 任何 S3 实现都用它，见 P2-T01 -->
+		<awssdk.version>2.46.7</awssdk.version>
+		<!--
+			AWS SDK 2.46 的同步客户端跑在 httpclient5 上，且用到 5.4+ 才有的 TlsSocketStrategy；
+			Boot 3.3 的 BOM 管的是 5.3.1，不抬会启动即 ClassNotFoundException。
+			httpcore5 要跟着抬到大版本一致，否则 client 与 core 对不上。
+		-->
+		<httpclient5.version>5.6.1</httpclient5.version>
+		<httpcore5.version>5.4</httpcore5.version>
 	</properties>
 
 	<dependencyManagement>

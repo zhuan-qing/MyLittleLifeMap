@@ -55,11 +55,14 @@ management:
 
 lifemap:
   storage:
-    minio:
-      endpoint: http://${MINIO_HOST:127.0.0.1}:${MINIO_API_PORT:9000}
-      access-key: ${MINIO_ROOT_USER:minioadmin}
-      secret-key: ${MINIO_ROOT_PASSWORD:minioadmin123}
-      bucket: ${MINIO_BUCKET:lifemap}
+    # 前缀用 s3 而不是 rustfs：换实现只改 endpoint，配置结构不动
+    s3:
+      endpoint: http://${RUSTFS_HOST:127.0.0.1}:${RUSTFS_API_PORT:9000}
+      access-key: ${RUSTFS_ACCESS_KEY:lifemap}
+      secret-key: ${RUSTFS_SECRET_KEY:lifemap_dev_2026}
+      bucket: ${RUSTFS_BUCKET:lifemap}
+      # 预签名地址有效期；S3 的 signatureDuration 上限 7 天，这里压到 1 小时
+      presign-ttl: 1h
       # 原图与缩略图同桶不同前缀，按 年/月/uuid 分片，避免单目录膨胀
       origin-prefix: originals
       webp-prefix: webp
