@@ -43,6 +43,16 @@ spring:
       max-file-size: 30MB
       max-request-size: 200MB
 
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    # 练手阶段看真实 SQL；P7 上生产前关掉
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    banner: false
+    db-config:
+      id-type: auto
+
 management:
   endpoints:
     web:

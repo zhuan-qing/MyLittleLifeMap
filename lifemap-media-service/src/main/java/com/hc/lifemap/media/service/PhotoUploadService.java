@@ -3,9 +3,12 @@ package com.hc.lifemap.media.service;
 import com.hc.lifemap.common.api.ErrorCode;
 import com.hc.lifemap.media.config.S3Properties;
 import com.hc.lifemap.media.dto.PhotoVO;
+import com.hc.lifemap.media.entity.Photo;
 import com.hc.lifemap.media.image.ExifMeta;
 import com.hc.lifemap.media.image.ExifReader;
 import com.hc.lifemap.media.image.ImagePipeline;
+import com.hc.lifemap.media.mapper.PhotoMapper;
+import com.hc.lifemap.media.storage.PhotoUrlResolver;
 import com.hc.lifemap.media.storage.S3Storage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +18,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,12 +27,12 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * 上传编排：校验 → 存原图 → 按 EXIF 出 WebP 与缩略图 → 回签名地址。转码细节在 {@link ImagePipeline}。
+ * 上传编排：校验 → 派生 → 三个对象落桶 → 写 photo 表 → 回可渲染地址。
  *
- * <p>校验顺序是"数量 → 大小 → 类型 → 内容"：能早拒的早拒，别为 30MB 的文件先读进内存再嫌它大。</p>
+ * <p>顺序是有讲究的：先派生再落盘，解不开的图不会在桶里留垃圾；先落对象再写库，
+ * 库里出现行时对象一定已经可读——反过来会出现"有记录但图 404"。</p>
  *
- * <p>三个对象同一个 uuid 基名，落在 {@code originals/}、{@code webp/}、{@code thumbs/} 下；
- * 前缀来自配置（{@code lifemap.storage.s3.*-prefix}），不写死在代码里。</p>
+ * <p>校验顺序是"数量 → 大小 → 类型"：能早拒的早拒，别为 20MB 的文件先读进内存再嫌它大。</p>
  */
 @Service
 public class PhotoUploadService {
@@ -47,13 +51,17 @@ public class PhotoUploadService {
     private final S3Properties properties;
     private final ExifReader exifReader;
     private final ImagePipeline pipeline;
+    private final PhotoMapper photoMapper;
+    private final PhotoUrlResolver urlResolver;
 
     public PhotoUploadService(S3Storage storage, S3Properties properties, ExifReader exifReader,
-                              ImagePipeline pipeline) {
+                              ImagePipeline pipeline, PhotoMapper photoMapper, PhotoUrlResolver urlResolver) {
         this.storage = storage;
         this.properties = properties;
         this.exifReader = exifReader;
         this.pipeline = pipeline;
+        this.photoMapper = photoMapper;
+        this.urlResolver = urlResolver;
     }
 
     public List<PhotoVO> upload(long placeId, MultipartFile[] files) {
@@ -84,37 +92,48 @@ public class PhotoUploadService {
             throw new PhotoRejected(ErrorCode.UNSUPPORTED_MEDIA_TYPE,
                     "只支持 jpeg / png / heic，当前 " + (contentType == null ? "未知" : contentType));
         }
+        // 类型允许但解不了：没有 HEIC 解码器就出不了派生图，宽高也拿不到，落不了库。
+        // 与其存一条半残记录（查回来没有缩略图），不如明确拒掉并告诉用户怎么办。
+        if (HEIC.equals(contentType)) {
+            throw new PhotoRejected(ErrorCode.UNSUPPORTED_MEDIA_TYPE,
+                    "HEIC 暂不支持（缺解码器），请转成 JPEG 后上传");
+        }
 
         byte[] bytes = readBytes(file);
         String base = LocalDate.now().format(MONTH_PATH) + "/" + UUID.randomUUID().toString().replace("-", "");
-        String originKey = properties.originPrefix() + "/" + base + "." + extensionOf(contentType);
-
-        // 没有 HEIC 解码器，派生图做不出来；原图照存，地址先顶上去，别让 iPhone 原图传不进来
-        if (HEIC.equals(contentType)) {
-            storage.put(originKey, new ByteArrayInputStream(bytes), bytes.length, contentType);
-            log.warn("HEIC 暂无解码器，只存原图、不出派生图: placeId={} key={}", placeId, originKey);
-            String url = storage.presignedGet(originKey);
-            return new PhotoVO(null, url, url, null, null);
-        }
 
         // 先解码派生再落盘：解不开就到此为止，不在桶里留一张废图
         ExifMeta exif = exifReader.read(bytes);
         ImagePipeline.Derived derived = pipeline.derive(bytes, exif);
 
-        storage.put(originKey, new ByteArrayInputStream(bytes), bytes.length, contentType);
-
+        String originKey = properties.originPrefix() + "/" + base + "." + extensionOf(contentType);
         String webpKey = properties.webpPrefix() + "/" + base + "." + derived.detail().extension();
         String thumbKey = properties.thumbPrefix() + "/" + base + "." + derived.thumbnail().extension();
+
+        storage.put(originKey, new ByteArrayInputStream(bytes), bytes.length, contentType);
         storage.put(webpKey, new ByteArrayInputStream(derived.detail().bytes()),
                 derived.detail().bytes().length, derived.detail().contentType());
         storage.put(thumbKey, new ByteArrayInputStream(derived.thumbnail().bytes()),
                 derived.thumbnail().bytes().length, derived.thumbnail().contentType());
 
-        log.info("照片已处理: placeId={} origin={} webp={}B thumb={}B orientation={} {}x{}",
-                placeId, originKey, derived.detail().bytes().length, derived.thumbnail().bytes().length,
-                exif.orientation(), derived.width(), derived.height());
+        Photo photo = new Photo();
+        photo.setPlaceId(placeId);
+        photo.setObjectKey(originKey);
+        photo.setWebpKey(webpKey);
+        photo.setThumbKey(thumbKey);
+        photo.setWidth(derived.width());
+        photo.setHeight(derived.height());
+        // 存原图字节数，不是派生图——这列回答的是"这条记录占了多少磁盘"
+        photo.setBytes((long) bytes.length);
+        // EXIF 没有拍摄时间时回落为上传时间，免得列表里出现时间空白的记录
+        photo.setTakenAt(exif.takenAt() == null ? OffsetDateTime.now() : exif.takenAt());
+        photoMapper.insert(photo);
 
-        return new PhotoVO(null, storage.presignedGet(thumbKey), storage.presignedGet(webpKey),
+        log.info("照片已入库: id={} placeId={} {}x{} origin={}B webp={}B thumb={}B orientation={}",
+                photo.getId(), placeId, derived.width(), derived.height(), bytes.length,
+                derived.detail().bytes().length, derived.thumbnail().bytes().length, exif.orientation());
+
+        return new PhotoVO(photo.getId(), urlResolver.resolve(thumbKey), urlResolver.resolve(webpKey),
                 derived.width(), derived.height());
     }
 
