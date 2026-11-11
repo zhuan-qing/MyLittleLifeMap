@@ -6,6 +6,7 @@ import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
@@ -65,6 +66,22 @@ public class S3Storage {
                     .toString();
         } catch (Exception e) {
             throw new StorageException("生成预签名地址失败: " + key, e);
+        }
+    }
+
+    /**
+     * 流式读对象，调用方负责关闭。导出打包时要的正是这个——不能把几十 MB 原图先读进堆再写出去。
+     *
+     * <p>对象不存在时抛 {@link StorageException}（内部接口据此回错误，不做静默兜底）。</p>
+     */
+    public InputStream get(String key) {
+        try {
+            return client.getObject(GetObjectRequest.builder()
+                    .bucket(properties.bucket())
+                    .key(key)
+                    .build());
+        } catch (Exception e) {
+            throw new StorageException("读取对象失败: " + key, e);
         }
     }
 
