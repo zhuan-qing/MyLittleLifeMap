@@ -38,9 +38,10 @@ spring:
     table: flyway_schema_history
   servlet:
     multipart:
-      # 单张照片上限 20MB，单次请求 5 张；与 P2 上传接口口径一致
-      max-file-size: 20MB
-      max-request-size: 100MB
+      # 业务口径是单张 20MB、单次 9 张（见 PhotoUploadService）。这里刻意留高：
+      # 容器先拒的话，超限请求到不了校验逻辑，返回的就不是 10413 而是 500/413。
+      max-file-size: 30MB
+      max-request-size: 200MB
 
 management:
   endpoints:
