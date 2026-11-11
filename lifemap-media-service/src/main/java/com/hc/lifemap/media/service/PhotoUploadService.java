@@ -1,18 +1,19 @@
 package com.hc.lifemap.media.service;
 
 import com.hc.lifemap.common.api.ErrorCode;
+import com.hc.lifemap.media.config.S3Properties;
 import com.hc.lifemap.media.dto.PhotoVO;
+import com.hc.lifemap.media.image.ExifMeta;
+import com.hc.lifemap.media.image.ExifReader;
+import com.hc.lifemap.media.image.ImagePipeline;
 import com.hc.lifemap.media.storage.S3Storage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -22,9 +23,12 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * 上传编排：校验 → 生成 key → 存原图 → 回签名地址。本卡不做转码（T03/T04 才加）。
+ * 上传编排：校验 → 存原图 → 按 EXIF 出 WebP 与缩略图 → 回签名地址。转码细节在 {@link ImagePipeline}。
  *
  * <p>校验顺序是"数量 → 大小 → 类型 → 内容"：能早拒的早拒，别为 30MB 的文件先读进内存再嫌它大。</p>
+ *
+ * <p>三个对象同一个 uuid 基名，落在 {@code originals/}、{@code webp/}、{@code thumbs/} 下；
+ * 前缀来自配置（{@code lifemap.storage.s3.*-prefix}），不写死在代码里。</p>
  */
 @Service
 public class PhotoUploadService {
@@ -35,13 +39,21 @@ public class PhotoUploadService {
     private static final int MAX_FILES = 9;
     private static final long MAX_BYTES = 20L * 1024 * 1024;
     private static final Set<String> ALLOWED_TYPES = Set.of("image/jpeg", "image/png", "image/heic");
+    private static final String HEIC = "image/heic";
 
     private static final DateTimeFormatter MONTH_PATH = DateTimeFormatter.ofPattern("yyyy/MM");
 
     private final S3Storage storage;
+    private final S3Properties properties;
+    private final ExifReader exifReader;
+    private final ImagePipeline pipeline;
 
-    public PhotoUploadService(S3Storage storage) {
+    public PhotoUploadService(S3Storage storage, S3Properties properties, ExifReader exifReader,
+                              ImagePipeline pipeline) {
         this.storage = storage;
+        this.properties = properties;
+        this.exifReader = exifReader;
+        this.pipeline = pipeline;
     }
 
     public List<PhotoVO> upload(long placeId, MultipartFile[] files) {
@@ -74,39 +86,36 @@ public class PhotoUploadService {
         }
 
         byte[] bytes = readBytes(file);
-        int[] size = readDimensions(bytes, contentType);
+        String base = LocalDate.now().format(MONTH_PATH) + "/" + UUID.randomUUID().toString().replace("-", "");
+        String originKey = properties.originPrefix() + "/" + base + "." + extensionOf(contentType);
 
-        String key = "originals/" + LocalDate.now().format(MONTH_PATH) + "/"
-                + UUID.randomUUID().toString().replace("-", "") + "." + extensionOf(contentType);
-        storage.put(key, new ByteArrayInputStream(bytes), bytes.length, contentType);
-        String url = storage.presignedGet(key);
-
-        log.info("照片已上传: placeId={} key={} bytes={} type={}", placeId, key, bytes.length,
-                contentType);
-        return new PhotoVO(null, url, url,
-                size == null ? null : size[0], size == null ? null : size[1]);
-    }
-
-    /**
-     * 内容探测：{@code getContentType()} 由客户端给、可伪造，所以真图要能被 ImageIO 解出来。
-     *
-     * <p>HEIC 例外：JDK 与当前依赖都解不了 HEIC，硬套这条会把手机原图全部判死。
-     * 它的宽高留空，等 T03/T04 接上解码器再补——宁可少两个字段，也不能拒掉合法照片。</p>
-     */
-    private int[] readDimensions(byte[] bytes, String contentType) {
-        try (InputStream in = new ByteArrayInputStream(bytes)) {
-            BufferedImage image = ImageIO.read(in);
-            if (image == null) {
-                if ("image/heic".equals(contentType)) {
-                    log.info("HEIC 暂不解码，宽高留空（待 T03/T04 补解码器）");
-                    return null;
-                }
-                throw new PhotoRejected(ErrorCode.UNSUPPORTED_MEDIA_TYPE, "文件内容不是可解析的图片");
-            }
-            return new int[]{image.getWidth(), image.getHeight()};
-        } catch (IOException e) {
-            throw new PhotoRejected(ErrorCode.UNSUPPORTED_MEDIA_TYPE, "图片读取失败: " + e.getMessage());
+        // 没有 HEIC 解码器，派生图做不出来；原图照存，地址先顶上去，别让 iPhone 原图传不进来
+        if (HEIC.equals(contentType)) {
+            storage.put(originKey, new ByteArrayInputStream(bytes), bytes.length, contentType);
+            log.warn("HEIC 暂无解码器，只存原图、不出派生图: placeId={} key={}", placeId, originKey);
+            String url = storage.presignedGet(originKey);
+            return new PhotoVO(null, url, url, null, null);
         }
+
+        // 先解码派生再落盘：解不开就到此为止，不在桶里留一张废图
+        ExifMeta exif = exifReader.read(bytes);
+        ImagePipeline.Derived derived = pipeline.derive(bytes, exif);
+
+        storage.put(originKey, new ByteArrayInputStream(bytes), bytes.length, contentType);
+
+        String webpKey = properties.webpPrefix() + "/" + base + "." + derived.detail().extension();
+        String thumbKey = properties.thumbPrefix() + "/" + base + "." + derived.thumbnail().extension();
+        storage.put(webpKey, new ByteArrayInputStream(derived.detail().bytes()),
+                derived.detail().bytes().length, derived.detail().contentType());
+        storage.put(thumbKey, new ByteArrayInputStream(derived.thumbnail().bytes()),
+                derived.thumbnail().bytes().length, derived.thumbnail().contentType());
+
+        log.info("照片已处理: placeId={} origin={} webp={}B thumb={}B orientation={} {}x{}",
+                placeId, originKey, derived.detail().bytes().length, derived.thumbnail().bytes().length,
+                exif.orientation(), derived.width(), derived.height());
+
+        return new PhotoVO(null, storage.presignedGet(thumbKey), storage.presignedGet(webpKey),
+                derived.width(), derived.height());
     }
 
     private byte[] readBytes(MultipartFile file) {
@@ -124,7 +133,7 @@ public class PhotoUploadService {
     private String extensionOf(String contentType) {
         return switch (contentType) {
             case "image/png" -> "png";
-            case "image/heic" -> "heic";
+            case HEIC -> "heic";
             default -> "jpg";
         };
     }

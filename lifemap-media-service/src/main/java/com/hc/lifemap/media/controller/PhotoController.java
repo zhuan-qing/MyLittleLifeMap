@@ -3,6 +3,7 @@ package com.hc.lifemap.media.controller;
 import com.hc.lifemap.common.api.ApiResponse;
 import com.hc.lifemap.common.api.ErrorCode;
 import com.hc.lifemap.media.dto.PhotoVO;
+import com.hc.lifemap.media.image.ImagePipeline;
 import com.hc.lifemap.media.service.PhotoUploadService;
 import com.hc.lifemap.media.storage.S3Storage;
 import org.slf4j.Logger;
@@ -53,6 +54,13 @@ public class PhotoController {
     public ApiResponse<Void> onRejected(PhotoUploadService.PhotoRejected e) {
         log.warn("上传被拒: {} {}", e.errorCode().code(), e.getMessage());
         return ApiResponse.fail(e.errorCode(), e.getMessage());
+    }
+
+    @ExceptionHandler(ImagePipeline.ImagePipelineException.class)
+    public ApiResponse<Void> onPipelineError(ImagePipeline.ImagePipelineException e) {
+        // 走到这里说明类型过了但字节不是真图（改名、损坏），口径与 10415 一致
+        log.warn("图片处理失败: {}", e.getMessage());
+        return ApiResponse.fail(ErrorCode.UNSUPPORTED_MEDIA_TYPE, "文件内容不是可解析的图片");
     }
 
     @ExceptionHandler(S3Storage.StorageException.class)

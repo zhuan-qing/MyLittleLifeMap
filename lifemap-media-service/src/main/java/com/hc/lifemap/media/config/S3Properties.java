@@ -14,7 +14,7 @@ import java.time.Duration;
  */
 @ConfigurationProperties(prefix = "lifemap.storage.s3")
 public record S3Properties(String endpoint, String accessKey, String secretKey, String bucket,
-                           Duration presignTtl) {
+                           Duration presignTtl, String originPrefix, String webpPrefix, String thumbPrefix) {
 
     /** S3 硬上限：预签名有效期超过 7 天，SDK 直接拒绝。 */
     private static final Duration MAX_PRESIGN_TTL = Duration.ofDays(7);
@@ -27,6 +27,14 @@ public record S3Properties(String endpoint, String accessKey, String secretKey, 
         } else if (presignTtl.compareTo(MAX_PRESIGN_TTL) > 0) {
             presignTtl = MAX_PRESIGN_TTL;
         }
+        // 同桶不同前缀；不配就用约定值，省得每个环境都要写三行
+        originPrefix = blankToDefault(originPrefix, "originals");
+        webpPrefix = blankToDefault(webpPrefix, "webp");
+        thumbPrefix = blankToDefault(thumbPrefix, "thumbs");
+    }
+
+    private static String blankToDefault(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value.trim();
     }
 
     /** 去掉结尾斜杠：拼路径时 {@code endpoint + "/" + bucket} 会拼出 {@code //}，签名对不上。 */

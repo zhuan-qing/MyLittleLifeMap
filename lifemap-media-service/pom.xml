@@ -55,6 +55,13 @@
 			<scope>runtime</scope>
 		</dependency>
 
+		<!-- WebP 编码插件：注册成 ImageIO 的 "webp" writer -->
+		<dependency>
+			<groupId>com.github.usefulness</groupId>
+			<artifactId>webp-imageio</artifactId>
+			<version>${webp-imageio.version}</version>
+		</dependency>
+
 		<!-- EXIF 读取：只读不写，方向与拍摄时间给派生图用 -->
 		<dependency>
 			<groupId>com.drewnoakes</groupId>
