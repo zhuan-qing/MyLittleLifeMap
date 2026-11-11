@@ -1,12 +1,36 @@
 # gateway 的环境级配置（Nacos dataId=gateway.yaml, group=GATEWAY）
 #
 # 优先级：Nacos 配置 > 本地 application.yaml。本地文件只放"启动必需、与环境无关"的默认值，
-# 凡是按环境变化的（路由目标、JWT 密钥、限流阈值）都放这里，改完不用重新打包。
+# 凡是按环境变化的（JWT 密钥、限流阈值）都放这里，改完不用重新打包。
 #
-# P3 会在此处补：lifemap.jwt.secret / lifemap.jwt.ttl、限流规则、路由表。
+# P3 后续会在此处补：lifemap.jwt.secret / lifemap.jwt.ttl、限流规则。
 
 lifemap:
   env: dev
+
+spring:
+  cloud:
+    gateway:
+      # 路由表：与本地 application.yaml 里那份逐字一致。
+      # 列表型配置被 Nacos 覆盖时是「整条列表覆盖、不逐条合并」——两份不一致会出现一半
+      # 来自 Nacos、一半来自本地的拼接路由，排查成本极高。改路由的顺序：
+      # 改这里 → ./scripts/nacos-init.sh → 再同步本地文件。
+      routes:
+        # 照片走 media-service；必须排在 places 前面（/api/places/1/photos 与 /api/places/** 前缀重叠）
+        - id: media-service
+          uri: lb://media-service
+          predicates:
+            - Path=/api/places/*/photos,/api/photos/**
+        # 地点、地理编码、登录、导出走 place-service
+        - id: place-service
+          uri: lb://place-service
+          predicates:
+            - Path=/api/places/**,/api/geo/**,/api/login,/api/export
+        # 统计与点亮走 stats-service
+        - id: stats-service
+          uri: lb://stats-service
+          predicates:
+            - Path=/api/stats/**
 
 logging:
   level:

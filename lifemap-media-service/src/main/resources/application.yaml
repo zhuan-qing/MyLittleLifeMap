@@ -14,7 +14,11 @@ spring:
       server-addr: ${NACOS_ADDR:127.0.0.1:8848}
       discovery:
         namespace: ${NACOS_NAMESPACE:lifemap-dev}
-        group: MEDIA
+        # 注册统一 DEFAULT_GROUP，只有「配置」按服务拆 group；否则网关查不到本服务
+        group: DEFAULT_GROUP
+        # 注册 IP 必须写死回环：默认取第一块网卡（本机是 WSL 的 192.168.70.1），
+        # 而服务只绑 127.0.0.1，网关打过去是 connection refused → 503
+        ip: 127.0.0.1
         metadata:
           version: 1.0.0
       config:

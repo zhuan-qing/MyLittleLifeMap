@@ -14,7 +14,12 @@ spring:
       server-addr: ${NACOS_ADDR:127.0.0.1:8848}
       discovery:
         namespace: ${NACOS_NAMESPACE:lifemap-dev}
-        group: PLACE
+        # 注册统一 DEFAULT_GROUP，只有「配置」按服务拆 group（见下方 config.group）。
+        # 注册也按服务拆的话，网关在自己那一组里永远查不到 place-service → lb:// 全部 503
+        group: DEFAULT_GROUP
+        # 注册 IP 必须写死回环：默认会取第一块网卡（本机是 WSL 的 192.168.70.1），
+        # 而服务只绑 127.0.0.1，网关照注册地址打过去是 connection refused → 503
+        ip: 127.0.0.1
         metadata:
           version: 1.0.0
       config:
