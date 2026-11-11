@@ -55,6 +55,13 @@
 			<scope>runtime</scope>
 		</dependency>
 
+		<!-- EXIF 读取：只读不写，方向与拍摄时间给派生图用 -->
+		<dependency>
+			<groupId>com.drewnoakes</groupId>
+			<artifactId>metadata-extractor</artifactId>
+			<version>${metadata-extractor.version}</version>
+		</dependency>
+
 		<!-- S3 客户端：RustFS 是 S3 兼容的，直接用 AWS SDK v2，不绑任何一家实现 -->
 		<dependency>
 			<groupId>software.amazon.awssdk</groupId>
