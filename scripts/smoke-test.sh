@@ -143,6 +143,29 @@ for entry in "gateway:${GATEWAY_PORT:-8080}" "place:${PLACE_PORT:-8081}" \
   fi
 done
 
+# ---------------------------------------------------------------- media 内部接口
+section "7. media 内部接口（可选，media 未启动则跳过）"
+MEDIA_BASE="http://127.0.0.1:${MEDIA_PORT:-8082}"
+if curl -fsS "${MEDIA_BASE}/actuator/health" >/dev/null 2>&1; then
+  # 空 ids 必须直接返回 {}，不发 SQL——这是详情页"这条记录没有照片"的常态
+  empty="$(curl -fsS "${MEDIA_BASE}/internal/photos/by-place-ids?ids=" 2>/dev/null || true)"
+  if [ "${empty}" = "{}" ]; then
+    ok "by-place-ids 空 ids → {}"
+  else
+    bad "by-place-ids 空 ids 返回 ${empty:-空}"
+  fi
+
+  # 内部接口只能读照片前缀，别让它变成任意对象下载器
+  code="$(curl -s -o /dev/null -w '%{http_code}' "${MEDIA_BASE}/internal/photos/stream?key=../../etc/passwd" || true)"
+  if [ "${code}" = "400" ]; then
+    ok "stream 拒绝非法 key（400）"
+  else
+    bad "stream 非法 key 返回 ${code}"
+  fi
+else
+  info "media :${MEDIA_PORT:-8082} 未启动，跳过内部接口检查"
+fi
+
 # ---------------------------------------------------------------- 汇总
 printf '\n\033[1m结果：%d 通过 / %d 失败\033[0m\n' "${PASS}" "${FAIL}"
 [[ "${FAIL}" -eq 0 ]] || exit 1
